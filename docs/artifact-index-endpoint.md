@@ -82,13 +82,39 @@ boolean as "attribution ran" and would then offer a permanently empty
 
 Attribution is the host's problem, not the plugin's, because only the host knows
 what a session is. One workable rule: a session's transcript records its tool
-calls, so an artifact whose path appears in a `write`/`edit`/`bash` call of that
-session belongs to it. Scanning a several-megabyte transcript costs a few hundred
-milliseconds, so cache it per session for tens of seconds and only scan when the
-`session` parameter is actually present. Validate the id against a strict
-pattern before it goes anywhere near a path, and treat a scan failure as "no
-attribution" rather than as an error — a shared list still works, and it must
-never be possible for scoping to break the index.
+calls, so an artifact whose path appears in one of *that session's* calls belongs
+to it. Four details decide whether that is accurate:
+
+- **Parse records; do not regex lines.** A consolidated `assistant/message` row
+  bundles reasoning, prose and tool calls in one JSON line, so a filename
+  mentioned in reasoning is indistinguishable from one in an argument unless you
+  walk the parsed record and read only tool-call arguments. Regexing the raw line
+  attributes artifacts to sessions that merely *talked about* them — observed in
+  practice as one session claiming four files another had written.
+- **`arguments` is a JSON-encoded string.** A shell command reads as
+  `{"command":"set -e\ncp -p a b"}`, where the newline is a two-character
+  escape. Any test for a leading verb or a redirection must decode it first, or
+  it matches only at position 0.
+- **Reading is not authoring.** For `write`/`edit` the path in the argument is
+  enough. For a shell or code tool, require something that creates the file — a
+  `cp`/`mv`/`install`/`tee`/`rsync` verb, a `publish-artifact` call, or a
+  redirection whose *target* is the artifact (`grep pat x.html > out.txt` writes
+  somewhere else and must not claim `x.html`). Tool *results* are excluded: a
+  command's output echoing a filename is not authorship.
+- **Be conservative.** An unclaimed artifact still appears under `All`, while a
+  falsely claimed one makes `This chat` show somebody else's work — the exact
+  confusion scoping exists to remove. Code tools that write through the harness's
+  own `write` tool are covered by its dispatch records; ones that write with
+  plain Python file I/O leave no trace and simply go unclaimed.
+
+Scanning a several-megabyte transcript costs a few hundred milliseconds, so cache
+it per session — keyed on a fingerprint of the listing rather than a TTL, which
+rescans exactly when the artifact set changes instead of on a timer, and never
+leaves a just-published file unattributed — and only scan when the `session`
+parameter is actually present. Validate the id against a strict pattern before it
+goes anywhere near a path, and treat a scan failure as "no attribution" rather
+than as an error: a shared list still works, and it must never be possible for
+scoping to break the index.
 
 With scoping available the tab defaults to `This chat` when it has at least one
 artifact and to `All` otherwise, remembers an explicit choice in
