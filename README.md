@@ -82,6 +82,23 @@ The endpoint must return:
 metadata-only and fenced to one directory, is in
 [`docs/artifact-index-endpoint.md`](docs/artifact-index-endpoint.md).
 
+### Scoping the list to the current chat
+
+One directory usually holds every session's output, so the tab can narrow the
+list. When the sidebar supplies a session id the request gains
+`&session=<id>`; an endpoint that can attribute artifacts answers with a boolean
+`mine` per item, and the tab shows a **This chat** / **All** toggle, defaulting to
+`This chat` when it has something.
+
+Attribution is deliberately the endpoint's business, not the plugin's — only the
+host knows what a session is. **Ignoring the parameter is fully supported:** omit
+`mine` and the toggle simply does not render, which is what the reference server
+in `contrib/` does. The one mistake to avoid is emitting `mine: false` for
+artifacts you know nothing about; the tab reads a boolean as "attribution ran"
+and would offer a permanently empty `This chat` view. Say nothing unless it is
+true. `docs/artifact-index-endpoint.md` describes a transcript-scanning rule that
+works, including why to cache it and validate the id.
+
 ## Architecture: why the node half is empty
 
 `lib/index.js` imports nothing and registers nothing. That is deliberate, and

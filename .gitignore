@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 # the bundle in lib/ is committed on purpose: consumers install it without a
 # build step, and the two post-build gates are what make that safe to do
+
+# Byte-compiled output -- a `python3 -m py_compile` next to the source drops it here.
+__pycache__/
+*.pyc

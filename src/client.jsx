@@ -129,6 +129,22 @@ const S = {
     border: '1px solid rgba(128,128,128,.4)', borderRadius: 4, padding: '0 4px',
     opacity: .78,
   },
+  /* Segmented scope toggle. Both halves are fixed-width and only their
+   * border/weight change when selected, so clicking one cannot shift the
+   * toolbar -- the same rule the Refresh button follows. */
+  seg: { display: 'flex', gap: 0, flex: '0 0 auto' },
+  segBtn: {
+    minWidth: 66, boxSizing: 'border-box', textAlign: 'center',
+    whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums',
+    font: 'inherit', fontSize: 11.5, lineHeight: '20px', padding: '0 8px',
+    border: '1px solid rgba(128,128,128,.45)', background: 'transparent',
+    borderRadius: 0, cursor: 'pointer', opacity: .68,
+  },
+  segBtnFirst: { borderRadius: '5px 0 0 5px' },
+  segBtnLast: { borderRadius: '0 5px 5px 0', borderLeft: 0 },
+  segBtnOn: { opacity: 1, fontWeight: 600 },
+  /* A glyph marker, not a colour: currentColor keeps it theme-neutral. */
+  mineDot: { flex: '0 0 auto', fontSize: 8, lineHeight: '20px', opacity: .75, paddingRight: 5 },
   preview: { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' },
   frame: { flex: 1, width: '100%', border: 0, minHeight: 0, background: 'transparent' },
   note: { padding: '14px 12px', lineHeight: 1.6, opacity: .78 },
@@ -139,17 +155,39 @@ const S = {
   code: { fontFamily: 'ui-monospace, monospace', fontSize: 12 },
 }
 
-function ArtifactsView({ visible }) {
+/* The artifact directory is shared by every session, so an unfiltered list
+ * mixes this chat's output with everyone else's. `scope.sessionId` comes from
+ * better-sidebar; the index endpoint joins it against this session's transcript
+ * and marks each item `mine`. */
+const SCOPE_PREF_KEY = 'dsh-artifacts:scope'
+
+function readScopePref() {
+  try {
+    const v = typeof localStorage !== 'undefined' && localStorage.getItem(SCOPE_PREF_KEY)
+    return v === 'mine' || v === 'all' ? v : null
+  } catch { return null }
+}
+
+function ArtifactsView({ visible, scope }) {
   const [items, setItems] = useState([])
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [selected, setSelected] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
+  const [scopePref, setScopePref] = useState(readScopePref)
+
+  const sessionId = scope && typeof scope.sessionId === 'string' ? scope.sessionId : ''
 
   const load = useCallback(async () => {
     setBusy(true)
     try {
-      const url = listUrl()
+      /* Ask for attribution only when there is a session to attribute to. The
+       * endpoint stays a plain list without it, so a host whose index does not
+       * implement `session=` keeps working. */
+      const base = listUrl()
+      const url = sessionId
+        ? base + (base.includes('?') ? '&' : '?') + 'session=' + encodeURIComponent(sessionId)
+        : base
       const res = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
       if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`)
       const ct = res.headers.get('content-type') || ''
@@ -168,7 +206,7 @@ function ArtifactsView({ visible }) {
     } finally {
       setBusy(false)
     }
-  }, [])
+  }, [sessionId])
 
   /* Poll only while the tab is the active one AND the panel is open — the
    * `visible` prop exists precisely so live views pause when hidden. */
@@ -187,6 +225,19 @@ function ArtifactsView({ visible }) {
    * second effect. */
   const current = selected && items.some((i) => i.name === selected.name) ? selected : null
 
+  /* Attribution is a host capability, not a guarantee. If no item carries a
+   * boolean `mine`, the index does not support it and the toggle would only
+   * offer an empty view -- so do not render it. */
+  const scopeKnown = !!sessionId && items.some((i) => typeof i.mine === 'boolean')
+  const mineCount = scopeKnown ? items.filter((i) => i.mine).length : 0
+  const effective = scopePref || (mineCount > 0 ? 'mine' : 'all')
+  const shown = scopeKnown && effective === 'mine' ? items.filter((i) => i.mine) : items
+
+  const chooseScope = (next) => {
+    setScopePref(next)
+    try { typeof localStorage !== 'undefined' && localStorage.setItem(SCOPE_PREF_KEY, next) } catch { /* private mode */ }
+  }
+
   const openExternal = (item) => {
     if (item) window.open(item.url, '_blank', 'noopener,noreferrer')
   }
@@ -199,7 +250,24 @@ function ArtifactsView({ visible }) {
     <div style={S.root}>
       <div style={S.bar}>
         <span style={S.title}>Artifacts</span>
-        <span style={S.count}>{items.length ? `${items.length} file${items.length === 1 ? '' : 's'}` : ''}</span>
+        <span style={S.count}>
+          {!items.length ? ''
+            : scopeKnown && effective === 'mine'
+              ? `${mineCount} of ${items.length} file${items.length === 1 ? '' : 's'}`
+              : `${items.length} file${items.length === 1 ? '' : 's'}`}
+        </span>
+        {scopeKnown && (
+          <span style={S.seg} role="group" aria-label="Which artifacts to list">
+            <button type="button" aria-pressed={effective === 'mine'}
+              style={{ ...S.segBtn, ...S.segBtnFirst, ...(effective === 'mine' ? S.segBtnOn : null) }}
+              title="Only artifacts this chat produced"
+              onClick={() => chooseScope('mine')}>This chat</button>
+            <button type="button" aria-pressed={effective === 'all'}
+              style={{ ...S.segBtn, ...S.segBtnLast, ...(effective === 'all' ? S.segBtnOn : null) }}
+              title={`All ${items.length} artifacts on this host`}
+              onClick={() => chooseScope('all')}>All</button>
+          </span>
+        )}
         <span style={S.spacer} />
         {current && (
           <>
@@ -221,6 +289,15 @@ function ArtifactsView({ visible }) {
       </div>
 
       <div style={S.list}>
+        {scopeKnown && effective === 'mine' && items.length > 0 && mineCount === 0 && !error && (
+          <div style={S.note}>
+            Nothing from this chat yet.
+            <br /><br />
+            Attribution is read from this session's transcript, so an artifact
+            only appears here once a tool call in <em>this</em> chat has written
+            it. Switch to <strong>All</strong> to see every artifact on the host.
+          </div>
+        )}
         {items.length === 0 && !error && (
           <div style={S.note}>
             No artifacts yet.
@@ -232,11 +309,17 @@ function ArtifactsView({ visible }) {
             <span style={S.code}>{listUrl()}</span>
           </div>
         )}
-        {items.map((it) => {
+        {shown.map((it) => {
           const on = current && current.name === it.name
           return (
             <div key={it.name} style={{ ...S.row, ...(on ? S.rowOn : null) }}
-              onClick={() => setSelected(it)} title={it.name}>
+              onClick={() => setSelected(it)}
+              title={it.mine ? `${it.name} — from this chat` : it.name}>
+              {/* In All mode, mark the ones this chat produced. In This-chat
+                  mode every row is mine, so the marker would be noise. */}
+              {scopeKnown && it.mine && effective === 'all' && (
+                <span style={S.mineDot} aria-label="from this chat">●</span>
+              )}
               <span style={S.badge}>{EXT_LABEL[it.ext] || it.ext}</span>
               <span style={S.name}>{it.name}</span>
               <span style={S.meta}>{fmtSize(it.size)} · {fmtAge(it.mtime)}</span>
@@ -251,7 +334,7 @@ function ArtifactsView({ visible }) {
             title={current.name} referrerPolicy="no-referrer" />
         ) : (
           <div style={S.note}>
-            {items.length
+            {shown.length
               ? 'Select an artifact above to preview it here. HTML previews refresh themselves when the file is regenerated.'
               : ''}
           </div>
@@ -294,6 +377,9 @@ export function apply(ctx) {
     order: 92,
     single: true,
     icon,
-    component: (props) => <ArtifactsView visible={props.visible} />,
+    /* Forward `scope` explicitly rather than spreading props: the view needs
+     * the session id to ask the index which artifacts belong to this chat, and
+     * a silent omission here degrades to "list everything" with no error. */
+    component: (props) => <ArtifactsView visible={props.visible} scope={props.scope} />,
   }), 'dsh-artifacts: register the Artifacts sidebar tab')
 }

@@ -35,6 +35,7 @@ can run as-is or steal pieces from.
 | `ext` | no | Lowercase, no dot. Drives the type badge; unknown values fall back to the extension text. |
 | `size` | no | Bytes. Rendered as B / kB / MB. |
 | `mtime` | no | Unix **seconds**. Rendered as `just now` / `5m ago` / `2h ago` / a locale date. |
+| `mine` | no | Boolean. True when this session produced the artifact — see [Optional: per-session scope](#optional-per-session-scope). |
 | `count` | no | Informational; the plugin counts `items` itself. |
 
 An object-level `error` string is surfaced inline instead of an empty state,
@@ -46,6 +47,53 @@ Configure the URL per browser without a rebuild:
 ```js
 localStorage['dsh-artifacts:indexUrl'] = '/artifacts/index.json'
 ```
+
+## Optional: per-session scope
+
+One artifact directory usually serves every session on the host, so an
+unfiltered list mixes this chat's output with everyone else's. The tab can
+narrow it to the current chat — but only if the endpoint can say which artifacts
+belong to which session.
+
+When the sidebar supplies a session id, the request gains one parameter:
+
+```
+GET /report/?list=1&session=session-43850cf2-3217-4d28-8ea9-d126e15d5f34
+```
+
+The id is URL-encoded and comes from `TabComponentProps.scope.sessionId`. An
+endpoint that supports scoping answers with `mine` on every item:
+
+```json
+{ "count": 2, "attributed": 1, "session": "session-43850cf2-…",
+  "items": [ { "name": "a.html", "url": "/report/a.html", "mine": true },
+             { "name": "b.html", "url": "/report/b.html", "mine": false } ] }
+```
+
+`attributed` and the echoed `session` are informational. What the tab acts on is
+`mine`.
+
+**Ignoring the parameter is a supported answer.** Omit `mine` entirely and the
+tab hides its `This chat` / `All` toggle and lists everything, exactly as before
+— the reference server in `contrib/` does this. What it must not do is emit
+`mine: false` for artifacts it knows nothing about, because the tab reads a
+boolean as "attribution ran" and would then offer a permanently empty
+`This chat` view. Say nothing when you cannot say anything true.
+
+Attribution is the host's problem, not the plugin's, because only the host knows
+what a session is. One workable rule: a session's transcript records its tool
+calls, so an artifact whose path appears in a `write`/`edit`/`bash` call of that
+session belongs to it. Scanning a several-megabyte transcript costs a few hundred
+milliseconds, so cache it per session for tens of seconds and only scan when the
+`session` parameter is actually present. Validate the id against a strict
+pattern before it goes anywhere near a path, and treat a scan failure as "no
+attribution" rather than as an error — a shared list still works, and it must
+never be possible for scoping to break the index.
+
+With scoping available the tab defaults to `This chat` when it has at least one
+artifact and to `All` otherwise, remembers an explicit choice in
+`localStorage['dsh-artifacts:scope']`, and marks this chat's rows with a dot in
+`All` mode.
 
 ## Rules that keep it safe
 

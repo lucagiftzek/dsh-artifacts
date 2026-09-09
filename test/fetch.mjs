@@ -7,10 +7,13 @@ import { readFileSync } from 'node:fs'
 import { makeRequire } from './react-resolve.mjs'
 const { require: req } = makeRequire()
 
-let queue = [], sets = [], captured = null
+let queue = [], sets = [], captured = null, hookIdx = 0
 const hookStub = {
   useState: (init) => {
-    const idx = 5 - queue.length            // 0 items, 1 error, 2 busy, 3 selected, 4 reloadKey
+    // An explicit counter, not `N - queue.length`: the component's state count
+    // changes as features are added, and deriving the index from the remaining
+    // queue silently mislabels setters once it does.
+    const idx = hookIdx++
     const v = queue.length ? queue.shift() : (typeof init === 'function' ? init() : init)
     return [v, (nv) => sets.push({ idx, nv })]
   },
@@ -33,10 +36,10 @@ const mod = registered[0].factory((n) => {
 let descriptor = null
 mod.apply({ betterSidebar: { registerTab: (d) => { descriptor = d; return () => {} } }, effect: (f) => f() })
 
-const NAMES = ['items', 'error', 'busy', 'selected', 'reloadKey']
+const NAMES = ['items', 'error', 'busy', 'selected', 'reloadKey', 'scopePref']
 
 async function run(label, fetchImpl, expect) {
-  queue = [[], null, false, null, 0]; sets = []; captured = null
+  queue = [[], null, false, null, 0]; sets = []; captured = null; hookIdx = 0
   // Install the stub BEFORE rendering: the effect calls load() immediately (as
   // it should -- immediate plus periodic), so assigning later would leave that
   // first in-flight call resolving against the previous scenario's stub.
@@ -63,6 +66,38 @@ const someErr = (got, sub) => got('error').some((e) => String(e).includes(sub))
 const itemsPopulated = (got) => got('items').some((v) => Array.isArray(v) && v.length > 0)
 
 let fail = 0
+console.log('--- index URL shape ---')
+{
+  // The scope filter only works if the request actually carries the session id,
+  // and only when there is one to carry.
+  let seen = []
+  const rec = async (u) => { seen.push(String(u)); return {
+    ok: true, status: 200,
+    headers: { get: () => 'application/json; charset=utf-8' },
+    json: async () => ({ count: 0, items: [] }) } }
+  const drive = async (props) => {
+    seen = []; queue = [[], null, false, null, 0]; sets = []; captured = null; hookIdx = 0
+    globalThis.fetch = rec
+    const el = descriptor.component(props)
+    if (typeof el.type === 'function') el.type(el.props)
+    await captured()
+    return seen
+  }
+  const withSession = await drive({ visible: true, scope: { sessionId: 'session-abc-123' }, tab: {}, store: {} })
+  const noScope = await drive({ visible: true, tab: {}, store: {} })
+  const emptySid = await drive({ visible: true, scope: { sessionId: '' }, tab: {}, store: {} })
+  const ck = (label, cond) => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`); if (!cond) { fail++; console.log('        seen:', JSON.stringify(withSession), JSON.stringify(noScope)) } }
+  ck('appends session= when a session id is present',
+    withSession.length > 0 && withSession.every((u) => u.includes('session=session-abc-123')))
+  ck('joins with & because the default index already has a query',
+    withSession.every((u) => u.includes('?list=1&session=')))
+  ck('no session param when scope is absent', noScope.every((u) => !u.includes('session=')))
+  ck('no session param for an empty session id', emptySid.every((u) => !u.includes('session=')))
+  ck('a session id is URL-encoded, never interpolated raw',
+    (await drive({ visible: true, scope: { sessionId: 'a b&c=d' }, tab: {}, store: {} }))
+      .every((u) => u.includes('session=a%20b%26c%3Dd') && !u.includes('a b&c=d')))
+}
+
 console.log('--- fetch path ---')
 if (!await run('happy path stores items and clears the error',
   json({ count: 1, items: [{ name: 'a.html', url: '/report/a.html', ext: 'html', size: 10, mtime: 1 }] }),

@@ -82,6 +82,13 @@ def index_payload():
             "mtime": int(st.st_mtime),
         })
     items.sort(key=lambda i: i["mtime"], reverse=True)
+    # No `mine` field on purpose. This server has no idea what a session is, and
+    # the tab treats a boolean `mine` as "attribution ran" -- emitting
+    # `mine: False` for everything would offer a permanently empty "This chat"
+    # view. Omitting the field makes the tab hide its scope toggle and list
+    # everything, which is the honest answer. A caller may still send
+    # `&session=<id>`; it is ignored here. See docs/artifact-index-endpoint.md
+    # for a transcript-scanning rule that does attribute, if you want to add one.
     return {"count": len(items), "items": items}
 
 

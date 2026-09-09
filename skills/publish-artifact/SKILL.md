@@ -21,6 +21,15 @@ there automatically, listed newest-first and previewable in place.
    which is sourced from successful `write`/`edit` calls rather than from your
    closing prose — so the file is listed whether or not you remember to mention
    it.
+
+   It is also what makes the artifact show up under **This chat** in the sidebar's
+   Artifacts tab. That tab has to work out which of the directory's files belong
+   to the conversation it is open in, and the only evidence available is this
+   session's own transcript: a file whose path appears in one of *your* tool calls
+   is yours. Write it somewhere else and move it with a shell one-liner, or ask a
+   different session to write it, and the link between the file and this chat is
+   lost — the artifact still serves, but it only appears in the unfiltered
+   **All** list alongside everyone else's.
 2. **Use an allowlisted extension**: `.html`, `.md`, `.txt`, `.json`, `.csv`,
    `.svg`. Anything else will be refused by the serving route.
 3. **Use a plain basename**, no directories, no leading dot.
