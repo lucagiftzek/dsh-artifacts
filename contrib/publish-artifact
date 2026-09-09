@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Publish one file into the artifact directory the dsh-artifacts tab reads.
+#
+#   publish-artifact <file> [name]
+#
+# Installs it mode 0644, prints the resulting URL when ARTIFACT_BASE_URL is set,
+# and refuses anything that looks like it should not be public. Written for
+# agents: the failure mode this guards against is an assistant helpfully
+# publishing /etc/passwd or a file with a key in it, to a route that is one auth
+# hop from the internet.
+#
+# Environment:
+#   ARTIFACT_DIR       destination directory        (default: ~/reports)
+#   ARTIFACT_BASE_URL  public prefix for the URL    (default: unset -> no URL printed)
+#   ARTIFACT_VERIFY    1 = curl the URL and require HTTP 200 (default: 1 if base url set)
+
+set -euo pipefail
+
+SRC="${1:-}"
+if [ -z "$SRC" ] || [ ! -f "$SRC" ]; then
+  echo "usage: publish-artifact <file> [name]" >&2
+  exit 2
+fi
+
+DIR="${ARTIFACT_DIR:-$HOME/reports}"
+NAME="${2:-$(basename "$SRC")}"
+EXT=".${NAME##*.}"
+
+fail() { echo "refused: $*" >&2; exit 1; }
+
+# --- destination guards -------------------------------------------------------
+case "$EXT" in
+  .html|.md|.txt|.json|.csv|.svg) ;;
+  *) fail "extension '$EXT' is not in the allowlist (.html .md .txt .json .csv .svg)" ;;
+esac
+case "$NAME" in
+  */*|.*) fail "name must be a plain basename and not a dotfile: '$NAME'" ;;
+esac
+
+# --- source guards ------------------------------------------------------------
+ABS="$(cd "$(dirname "$SRC")" && pwd)/$(basename "$SRC")"
+case "$ABS" in
+  /etc/*|/root/*|/proc/*|/sys/*|/dev/*) fail "will not publish from a system path: $ABS" ;;
+esac
+case "$HOME" in
+  /*) for p in .ssh .dsh .claude .config .aws .vibe .gnupg .local/share .npm; do
+        case "$ABS" in "$HOME/$p"/*) fail "will not publish from a credential/config path: $ABS" ;; esac
+      done ;;
+esac
+case "$(basename "$ABS")" in
+  .*) fail "will not publish a dotfile: $ABS" ;;
+esac
+
+# --- content guards -----------------------------------------------------------
+# Patterns that have no business being in a document handed to a human browser.
+if LC_ALL=C grep -qE 'sk-ant-(oat|api)|-----BEGIN [A-Z ]*PRIVATE KEY-----|(sk|ghp|gho|xox[baprs])-[A-Za-z0-9]{16,}' "$SRC"; then
+  fail "$NAME matches a known API-key / private-key pattern"
+fi
+if LC_ALL=C grep -qE '(^|[[:space:]])([A-Z0-9_]*(API_KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]*)[[:space:]]*=[[:space:]]*[^[:space:]]{8,}' "$SRC"; then
+  fail "$NAME contains a '<NAME>_KEY=' style assignment"
+fi
+
+# --- install ------------------------------------------------------------------
+mkdir -p "$DIR"
+install -m 0644 "$SRC" "$DIR/$NAME"
+echo "published: $DIR/$NAME ($(wc -c < "$DIR/$NAME") bytes)"
+
+if [ -n "${ARTIFACT_BASE_URL:-}" ]; then
+  URL="${ARTIFACT_BASE_URL%/}/$NAME"
+  echo "url: $URL"
+  if [ "${ARTIFACT_VERIFY:-1}" = "1" ]; then
+    # Test through the loopback/origin you actually serve from. If the public
+    # hostname hairpins back through a tunnel or CDN, a failure here may say
+    # more about that path than about the file.
+    CODE="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$URL" 2>/dev/null || echo 000)"
+    if [ "$CODE" = "200" ]; then
+      echo "verified: HTTP 200"
+    else
+      echo "NOT VERIFIED: $URL answered $CODE" >&2
+      exit 1
+    fi
+  fi
+fi

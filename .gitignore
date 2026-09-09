@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+.DS_Store
+# the bundle in lib/ is committed on purpose: consumers install it without a
+# build step, and the two post-build gates are what make that safe to do

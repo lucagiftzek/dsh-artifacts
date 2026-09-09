@@ -1,0 +1,14 @@
+# dsh-artifacts bundle patch.
+#
+# Inserts one row so the host Loader mounts this package. The node half
+# (exports ".") registers nothing at all -- it exists purely so this row can
+# mount and so the client-modules scan sees the `dsh.client` declaration. The
+# browser half (lib/client.js) registers the "Artifacts" sidebar tab through
+# dsh-better-sidebar's public `ctx.betterSidebar.registerTab` extension point.
+#
+# Install:   dsh plugin --profile web add github:lucagiftzek/dsh-artifacts
+#        or  dsh plugin --profile web add link:./dsh-artifacts   (from a checkout)
+# Remove:    dsh plugin --profile web remove dsh-artifacts
+- insert:
+    - id: dsh-artifacts
+      name: 'dsh-artifacts'
