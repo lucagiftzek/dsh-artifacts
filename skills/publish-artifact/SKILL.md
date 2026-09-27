@@ -43,6 +43,31 @@ there automatically, listed newest-first and previewable in place.
    HTML, so an open browser tab or sidebar preview refreshes itself when you do —
    the human watches it update instead of re-clicking a link.
 
+## Low-consumption default: Markdown + `artifact-kit`
+
+Most artifacts are a report, dashboard, plan, comparison or brief. For those, do
+not hand-write HTML. `write` a short `~/reports/<name>.md`, then run:
+
+    artifact-kit render ~/reports/<name>.md     # prints the URL of <name>.html
+
+The page it builds is themed (light and dark), self-contained, and mobile-safe.
+The `.md` stays beside it as the editable source: to change the page, edit the
+`.md` and re-render. Front matter (`title`, `subtitle`, `template`, `status`,
+`date`) is optional. `template` is one of report, dashboard, plan, comparison or
+brief. Components are fenced blocks:
+
+    ```kpi                 Label | Value | note | good|bad   (one tile per line)
+    ```chart bar|hbar|line CSV, first column labels, then numeric series
+    ```callout info|ok|warn|risk
+    ```timeline            when | what | detail
+
+Tables become sortable, and `- [ ]` / `- [x]` become checklists.
+`artifact-kit example <template>` prints a ready-to-fill starter.
+
+Hand-written HTML is still right, and fully supported, when the deliverable is
+an interactive tool, a mini app, a game or a bespoke visual that the kit's blocks
+can't express. The kit is the cheap default, not a limit.
+
 ## Never put a secret in an artifact
 
 These files end up one authentication hop from the internet and are meant to be
