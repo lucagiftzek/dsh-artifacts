@@ -7,3 +7,6 @@ node_modules/
 # Byte-compiled output -- a `python3 -m py_compile` next to the source drops it here.
 __pycache__/
 *.pyc
+
+# Rebuilt by scripts/vendor.sh (13 MB of upstream UMD builds)
+vendor/

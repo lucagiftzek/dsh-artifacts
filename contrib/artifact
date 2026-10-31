@@ -1,0 +1,565 @@
+#!/usr/bin/env python3
+"""artifact -- create, inspect and drive artifacts from an agent session.
+
+Artifacts live in ~/reports/ and are served at https://dsh.example.com/report/<name>.
+Everything you create here is attributed to your chat ($DSH_SESSION_ID), so it
+shows up under "This chat" in the Artifacts sidebar tab.
+
+CREATE
+  artifact new <name> [--type T] [--title "..."]   scaffold and print path + URL
+        T = report (default) | dashboard | plan | comparison | brief | interactive  -> <name>.md
+            page   -> <name>.html (single self-contained page, bridge-ready)
+            react  -> <name>/index.html + <name>/app.jsx (React 18 + Tailwind + JSX, no build)
+            app    -> <name>/index.html + <name>/app.js (vanilla / preact-htm)
+            motion -> <name>.html (player) + <name>.motion/index.html (HyperFrames composition)
+                      [--size landscape|portrait|square|720p|WxH] [--duration 12]
+  artifact url <name>                print the URL (md -> its rendered .html)
+  artifact render <x.md>             write the .html next to the .md (optional: it renders on the fly)
+
+INSPECT / UNDO
+  artifact list [--all] [-n 20]      this chat's artifacts (or all)
+  artifact show <name>               url, source file, versions, storage, public state
+  artifact versions <name>           automatic snapshots (every change is kept, 40 per file)
+  artifact diff <name> [A] [B]       unified diff between snapshots (default: last change)
+  artifact restore <name> <v>        put a snapshot back
+
+TWO-WAY
+  artifact inbox [--clear]           what artifacts sent back silently (dsh.context, forms in
+                                     context mode, runtime errors). Read it when the user says
+                                     "I filled it in" / "look at the artifact".
+  artifact state <name> [key]        read the artifact's persistent storage (dsh.storage)
+  artifact state-set <name> <key> <json>   push data INTO a live artifact without rewriting
+                                     it (the page reads it with dsh.storage.get / .watch)
+  artifact public <name> on|off      public no-login link /report-public/<name>
+
+MEDIA (files land in ~/reports/media/, embed with ![](media/x.png) or <img src>)
+  artifact media image "<prompt>" [--provider mistral|dashscope|local] [--name f]
+  artifact media tts "<text>" [--voice gb_oliver_neutral] [--name f]
+  artifact media stt <audio-file>
+  artifact media video "<prompt>" [--provider local|gemini]   (local: free, 2 s WebP, 10-20 min;
+                                     gemini: METERED, only when the user asked for it)
+  artifact media voices | capabilities
+
+MOTION (animated explainers as code -> MP4; skill: dsh-motion)
+  artifact motion check <name>       lint + runtime + layout + contrast gate (fix errors before export)
+  artifact motion snapshot <name> [--at 1,4.5] [--frames 5]   PNG stills -> read them with read_image
+  artifact motion export <name> [--quality draft|looks|delivery] [--format mp4|webm|gif|mov]
+                     [--fps 30] [--resolution 4k] [--host auto|local|REMOTE]
+                                     render; the player page shows the result (alias: artifact export)
+  artifact motion voice <name> "<text>" [--voice v] [--id vo1] [--at 0]   TTS into assets/ + <audio> snippet
+
+REFERENCE
+  artifact help md       Markdown components (kpi, chart, form, actions, mermaid, ...)
+  artifact help bridge   window.dsh API for hand-written pages and apps
+  artifact libs          local libraries under /report/_lib (React, Tailwind, Chart.js, d3, three...)
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(os.path.realpath(__file__)).parent
+PLUGIN = HERE.parent
+sys.path.insert(0, str(PLUGIN / "server"))
+sys.path.insert(0, str(HERE))
+os.environ.setdefault("ARTIFACT_DIR", str(Path.home() / "reports"))
+
+import artifacts_server as S  # noqa: E402
+
+BASE = os.environ.get("ARTIFACT_BASE_URL", "/report").rstrip("/")
+SESSION = os.environ.get("DSH_SESSION_ID", "")
+KIT = PLUGIN / "contrib" / "artifact-kit"
+
+
+def die(msg):
+    sys.exit("artifact: " + msg)
+
+
+def flag(args, name, default=None):
+    if name in args:
+        i = args.index(name)
+        if i + 1 < len(args):
+            v = args[i + 1]
+            del args[i:i + 2]
+            return v
+        del args[i]
+        return True
+    return default
+
+
+def rel_of(name):
+    """Accept a bare name, a path under ~/reports, or a URL."""
+    n = str(name)
+    for p in (BASE + "/", "/report/", str(S.REPORT_DIR) + "/", "~/reports/"):
+        if n.startswith(p):
+            n = n[len(p):]
+    n = n.split("?")[0].strip("/")
+    rel = S.safe_rel(n)
+    if not rel:
+        die("bad artifact name: %s" % name)
+    return rel
+
+
+def view_rel(rel):
+    """The URL-facing name: x.md -> x.html (rendered)."""
+    if rel.endswith(".md"):
+        return rel[:-3] + ".html"
+    return rel
+
+
+def url(rel):
+    full = S.REPORT_DIR / rel
+    if full.is_dir():
+        return "%s/%s/" % (BASE, rel)
+    return "%s/%s" % (BASE, view_rel(rel))
+
+
+def claim(rel):
+    if SESSION:
+        S.add_claim(rel, SESSION, "cli")
+
+
+SCAFFOLD_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%(title)s</title>
+<style>
+:root{--bg:#f7f5f2;--panel:#fff;--ink:#1c1a18;--muted:#6b645d;--line:#e3ddd6;--accent:#c1553a;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#141210;--panel:#1c1917;--ink:#ece6df;--muted:#a39a90;--line:#2f2a26;--accent:#d8694c}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,sans-serif;overflow-wrap:break-word}
+main{max-width:960px;margin:0 auto;padding:24px 16px}button{font:inherit;padding:6px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--accent);border-radius:6px;cursor:pointer}
+</style></head>
+<body><main>
+<h1>%(title)s</h1>
+<p>Replace this content. window.dsh is available: dsh.send(text), dsh.storage, dsh.ai(prompt), dsh.image(prompt).</p>
+<button data-dsh-send="Looks good">Looks good</button>
+</main>
+<script>
+// your code
+</script>
+</body></html>
+"""
+
+SCAFFOLD_REACT_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%(title)s</title>
+<script src="/report/_lib/tailwind.js"></script>
+<script src="/report/_lib/react.js"></script>
+<script src="/report/_lib/react-dom.js"></script>
+<script src="/report/_lib/babel.js"></script>
+</head>
+<body class="bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
+<div id="root"></div>
+<!-- Edit app.jsx only. It reloads in the sidebar on every save. -->
+<script type="text/babel" data-presets="react" src="app.jsx"></script>
+</body></html>
+"""
+
+SCAFFOLD_REACT_JSX = """const { useState, useEffect } = React;
+
+// window.dsh: send(text) | context(obj) | storage.get/set/watch | ai(prompt) | image(prompt) | tts(text)
+function App() {
+  const [count, setCount] = useState(0);
+  useEffect(() => { dsh.storage.get('count').then(v => v != null && setCount(v)); }, []);
+  const bump = () => { const n = count + 1; setCount(n); dsh.storage.set('count', n); };
+  return (
+    <main className="max-w-3xl mx-auto p-6 space-y-4">
+      <h1 className="text-2xl font-semibold">%(title)s</h1>
+      <button className="px-3 py-1.5 rounded bg-orange-600 text-white" onClick={bump}>Clicked {count} times</button>
+      <button className="px-3 py-1.5 rounded border ml-2" onClick={() => dsh.send('The counter is at ' + count)}>Tell the agent</button>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+"""
+
+SCAFFOLD_APP_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%(title)s</title>
+<style>body{margin:0;font:16px/1.5 system-ui,sans-serif}main{max-width:960px;margin:0 auto;padding:24px 16px}</style>
+</head><body><main id="app"></main>
+<script type="module" src="app.js"></script>
+</body></html>
+"""
+
+SCAFFOLD_APP_JS = """// Vanilla module. For components without a build step:
+//   import { html, render, useState } from '/report/_lib/preact-htm.js'  (UMD global htmPreact also works)
+const app = document.getElementById('app');
+app.innerHTML = '<h1>%(title)s</h1><p>Edit app.js.</p>';
+"""
+
+
+def cmd_new(args):
+    typ = flag(args, "--type", "report")
+    title = flag(args, "--title")
+    if not args:
+        die("usage: artifact new <name> [--type T] [--title ...]")
+    name = args[0].strip().strip("/")
+    stem = name.rsplit(".", 1)[0] if name.endswith((".md", ".html")) else name
+    title = title or stem.replace("-", " ").replace("_", " ").title()
+    d = S.REPORT_DIR
+    if typ in ("report", "dashboard", "plan", "comparison", "brief", "interactive"):
+        p = d / (stem + ".md")
+        if p.exists():
+            die("%s already exists - edit it instead" % p)
+        ex = subprocess.run([str(KIT), "example", typ], capture_output=True, text=True).stdout
+        lines = ex.splitlines()
+        for i, l in enumerate(lines):
+            if l.startswith("title:"):
+                lines[i] = "title: " + title
+                break
+        p.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        rel = p.name
+    elif typ == "page":
+        p = d / (stem + ".html")
+        if p.exists():
+            die("%s already exists" % p)
+        p.write_text(SCAFFOLD_PAGE % {"title": title}, encoding="utf-8")
+        rel = p.name
+    elif typ == "motion":
+        import motion as MO
+        try:
+            stem = MO.split_name(d, stem)
+            proj, page = MO.scaffold(d, stem, title, size=flag(args, "--size"), duration=flag(args, "--duration"))
+        except MO.MotionError as e:
+            die(str(e))
+        for r in (page.name, proj.name, proj.name + "/index.html"):
+            claim(r)
+        print("created %s (player page)" % page)
+        print("edit    %s (the composition)" % (proj / "index.html"))
+        print(url(page.name))
+        return
+    elif typ in ("react", "app"):
+        p = d / stem
+        if p.exists():
+            die("%s already exists" % p)
+        p.mkdir(parents=True)
+        if typ == "react":
+            (p / "index.html").write_text(SCAFFOLD_REACT_HTML % {"title": title}, encoding="utf-8")
+            (p / "app.jsx").write_text(SCAFFOLD_REACT_JSX.replace("%(title)s", title), encoding="utf-8")
+            main = p / "app.jsx"
+        else:
+            (p / "index.html").write_text(SCAFFOLD_APP_HTML % {"title": title}, encoding="utf-8")
+            (p / "app.js").write_text(SCAFFOLD_APP_JS % {"title": title}, encoding="utf-8")
+            main = p / "app.js"
+        rel = stem
+        claim(rel)
+        print("created %s/ (edit %s)" % (p, main))
+        print(url(rel))
+        return
+    else:
+        die("unknown --type %s" % typ)
+    claim(rel)
+    if rel.endswith(".md"):
+        claim(view_rel(rel))
+    print("created %s" % (d / rel))
+    print(url(rel))
+
+
+def cmd_url(args):
+    if not args:
+        die("usage: artifact url <name>")
+    rel = rel_of(args[0])
+    claim(rel)
+    print(url(rel))
+
+
+def cmd_render(args):
+    if not args:
+        die("usage: artifact render <file.md>")
+    r = subprocess.run([str(KIT), "render", args[0]], capture_output=True, text=True)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    if r.returncode == 0:
+        rel = rel_of(Path(args[0]).expanduser().resolve())
+        claim(rel)
+        claim(view_rel(rel))
+    sys.exit(r.returncode)
+
+
+def ago(ts):
+    s = max(0, int(time.time() - ts))
+    return "%ds" % s if s < 60 else "%dm" % (s // 60) if s < 3600 else "%dh" % (s // 3600) if s < 86400 else "%dd" % (s // 86400)
+
+
+def cmd_list(args):
+    n = int(flag(args, "-n", 20))
+    allf = flag(args, "--all", False)
+    idx = S.build_index(SESSION if SESSION and not allf else None)
+    items = idx["items"]
+    if SESSION and not allf:
+        items = [i for i in items if i.get("mine")]
+    for it in items[:n]:
+        print("%-6s %-5s %-48s %s" % (it["kind"], ago(it["mtime"]), it["name"][:48], (it.get("title") or "")[:50]))
+    if not items:
+        print("(none%s)" % (" from this chat - try --all" if SESSION and not allf else ""))
+
+
+def cmd_show(args):
+    rel = rel_of(args[0]) if args else die("usage: artifact show <name>")
+    src = S.source_rel(view_rel(rel) if rel.endswith(".md") else rel)
+    vs = S.versions_of(src)
+    st = S._json_load(S._state_path(view_rel(rel)), {})
+    print("url:      %s" % url(rel))
+    print("source:   %s" % (S.REPORT_DIR / src))
+    print("versions: %d%s" % (len(vs), (" (latest %s ago)" % ago(vs[-1]["mtime"])) if vs else ""))
+    print("storage:  %s" % (", ".join(sorted(st)) or "(empty)"))
+    print("public:   %s" % ("yes" if os.path.exists(str(S.REPORT_DIR / view_rel(rel)) + ".public") else "no"))
+
+
+def cmd_versions(args):
+    rel = rel_of(args[0]) if args else die("usage: artifact versions <name>")
+    src = S.source_rel(view_rel(rel)) if rel.endswith(".md") else S.source_rel(rel)
+    vs = S.versions_of(src)
+    for i, v in enumerate(vs):
+        print("%s  %s  %6d B%s" % (v["id"], time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(v["mtime"])), v["size"], "  (current)" if i == len(vs) - 1 else ""))
+    if not vs:
+        print("(no snapshots yet - the indexer takes one within seconds of every change)")
+
+
+def cmd_diff(args):
+    import difflib
+    rel = rel_of(args[0]) if args else die("usage: artifact diff <name> [A] [B]")
+    src = S.source_rel(view_rel(rel)) if rel.endswith(".md") else S.source_rel(rel)
+    vs = [v["id"] for v in S.versions_of(src)]
+    if len(vs) < 1:
+        die("no snapshots")
+    b = args[2] if len(args) > 2 else vs[-1]
+    a = args[1] if len(args) > 1 else (vs[vs.index(b) - 1] if b in vs and vs.index(b) > 0 else None)
+    if not a:
+        die("only one version exists")
+    A = (S.version_bytes(src, a) or b"").decode("utf-8", "replace").splitlines()
+    B = (S.version_bytes(src, b) or b"").decode("utf-8", "replace").splitlines()
+    sys.stdout.write("\n".join(difflib.unified_diff(A, B, "v" + a, "v" + b, lineterm="", n=2)) + "\n")
+
+
+def cmd_restore(args):
+    if len(args) < 2:
+        die("usage: artifact restore <name> <version-id>")
+    rel = rel_of(args[0])
+    src = S.source_rel(view_rel(rel)) if rel.endswith(".md") else S.source_rel(rel)
+    data = S.version_bytes(src, args[1])
+    if data is None:
+        die("no such version")
+    S._atomic_write(S.REPORT_DIR / src, data)
+    claim(src)
+    print("restored %s to %s" % (src, args[1]))
+
+
+def cmd_inbox(args):
+    sess = flag(args, "--session", SESSION)
+    clear = flag(args, "--clear", False)
+    if not sess:
+        die("no session (DSH_SESSION_ID unset); pass --session")
+    items = S.inbox_read(sess)
+    if not items:
+        print("(inbox empty)")
+    for it in items:
+        when = time.strftime("%H:%M", time.localtime(it.get("time", 0)))
+        data = it.get("data")
+        text = str(it.get("text", ""))
+        extra = (" " + json.dumps(data, ensure_ascii=False)[:600]) if data and json.dumps(data, ensure_ascii=False, separators=(",", ":")) != text else ""
+        print("[%s] %s from %s: %s%s" % (when, it.get("kind"), it.get("name"), text[:1200], extra))
+    if clear:
+        try:
+            (S.INBOX / (sess + ".jsonl")).unlink()
+        except OSError:
+            pass
+
+
+def cmd_state(args):
+    if not args:
+        die("usage: artifact state <name> [key]")
+    rel = view_rel(rel_of(args[0]))
+    data = S._json_load(S._state_path(rel), {})
+    if len(args) > 1:
+        print(json.dumps(data.get(args[1]), indent=2, ensure_ascii=False))
+    else:
+        print(json.dumps(data, indent=2, ensure_ascii=False)[:20000])
+
+
+def cmd_state_set(args):
+    if len(args) < 3:
+        die("usage: artifact state-set <name> <key> <json-value>")
+    rel = view_rel(rel_of(args[0]))
+    try:
+        v = json.loads(args[2])
+    except ValueError:
+        v = args[2]
+    S.storage_op(rel, "set", key=args[1], value=v)
+    print("ok")
+
+
+def cmd_public(args):
+    if len(args) < 2 or args[1] not in ("on", "off"):
+        die("usage: artifact public <name> on|off")
+    rel = rel_of(args[0])
+    names = {rel, view_rel(rel), S.source_rel(view_rel(rel))}
+    for n in names:
+        m = Path(str(S.REPORT_DIR / n) + ".public")
+        if args[1] == "on" and (S.REPORT_DIR / n).exists():
+            m.touch()
+        elif args[1] == "off" and m.exists():
+            m.unlink()
+    if args[1] == "on":
+        print(BASE.replace("/report", "/report-public") + "/" + view_rel(rel))
+    else:
+        print("private")
+
+
+def cmd_media(args):
+    import media as M
+    if not args:
+        die("usage: artifact media image|tts|stt|video|voices|capabilities ...")
+    kind = args.pop(0)
+    provider = flag(args, "--provider")
+    name = flag(args, "--name")
+    try:
+        if kind == "capabilities":
+            print(json.dumps(M.capabilities(), indent=2))
+            return
+        if kind == "voices":
+            print(json.dumps(M.voices(), indent=2)[:4000])
+            return
+        if kind == "image":
+            res = M.image(" ".join(args), provider=provider, name=name, size=flag(args, "--size"))
+        elif kind == "tts":
+            voice = flag(args, "--voice")
+            res = M.tts(" ".join(args), voice=voice, name=name)
+        elif kind == "stt":
+            p = Path(args[0]).expanduser()
+            mime = {"mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "m4a": "audio/mp4", "webm": "audio/webm"}.get(p.suffix.lstrip(".").lower(), "audio/mpeg")
+            print(M.stt(p.read_bytes(), mime=mime, filename=p.name)["text"])
+            return
+        elif kind == "video":
+            print("generating video (%s) - this can take a while..." % (provider or "local"), file=sys.stderr)
+            res = M.video(" ".join(args), provider=provider, name=name)
+        else:
+            die("unknown media kind %s" % kind)
+    except M.MediaError as e:
+        die(str(e))
+    claim(res["name"])
+    print("%s  (%s, %d KB, %s)" % (BASE + "/" + res["name"], res["path"], res["bytes"] // 1024, res.get("provider")))
+    print("embed: ![](%s)" % res["name"] if kind == "image" else "embed: [%s](%s)" % (kind, res["name"]))
+
+
+def cmd_motion(args):
+    import motion as MO
+    if not args:
+        die("usage: artifact motion check|snapshot|export|voice <name> ...")
+    sub = args.pop(0)
+    if not args:
+        die("usage: artifact motion %s <name>" % sub)
+    try:
+        stem = MO.split_name(S.REPORT_DIR, args.pop(0))
+        if sub == "check":
+            code, out = MO.check(S.REPORT_DIR, stem, args)
+            print(out[-6000:])
+            sys.exit(code)
+        elif sub == "snapshot":
+            pngs = MO.snapshot(S.REPORT_DIR, stem, at=flag(args, "--at"), frames=flag(args, "--frames"))
+            for p in pngs:
+                print(p)
+            if not pngs:
+                print("(no frames captured)")
+        elif sub in ("export", "render"):
+            q = flag(args, "--quality", "looks")
+            out, host, tail = MO.export(S.REPORT_DIR, stem, quality=q, fps=flag(args, "--fps"),
+                                        fmt=flag(args, "--format", "mp4"), host=flag(args, "--host", "auto"),
+                                        resolution=flag(args, "--resolution"), log=lambda m: print(m, file=sys.stderr))
+            rel = "%s.motion/renders/%s" % (stem, out.name)
+            claim(rel)
+            info = {"url": "%s.motion/renders/%s" % (stem, out.name), "file": out.name, "quality": q, "host": host,
+                    "size_kb": out.stat().st_size // 1024, "stamp": int(out.stat().st_mtime),
+                    "when": time.strftime("%Y-%m-%d %H:%M", time.localtime(out.stat().st_mtime)),
+                    "duration": MO.probe_duration(out)}
+            S.storage_op(stem + ".html", "set", key="render", value=info)
+            for line in [l for l in tail.splitlines() if l.strip() and not any(x in l for x in ("[Render:trace]", "[INFO]", "Framey", "browserGpuMode"))][-2:]:
+                if line.strip():
+                    print("  " + line.strip()[:200], file=sys.stderr)
+            print("%s/%s  (%d KB, %ss, rendered on %s)" % (BASE, rel, info["size_kb"], info["duration"], host))
+            print("player: %s/%s.html" % (BASE, stem))
+        elif sub == "voice":
+            import media as M
+            voice = flag(args, "--voice")
+            vid = flag(args, "--id", "vo1")
+            at = flag(args, "--at", "0")
+            text = " ".join(args).strip() or die("usage: artifact motion voice <name> \"text\"")
+            proj = MO.project_dir(S.REPORT_DIR, stem)
+            res = M.tts(text, voice=voice, name="%s-%s" % (stem, vid))
+            src = Path(res["path"])
+            dst = proj / "assets" / (vid + src.suffix)
+            dst.parent.mkdir(exist_ok=True)
+            import shutil
+            shutil.copyfile(src, dst)
+            dur = MO.probe_duration(dst) or 0
+            print("saved %s (%.2fs)" % (dst, dur))
+            print("paste inside #root (audio needs an id; it is mixed into the export):")
+            print('  <audio id="%s" src="assets/%s" data-start="%s" data-duration="%.2f" data-track-index="9"></audio>'
+                  % (vid, dst.name, at, dur))
+        else:
+            die("unknown motion command %s" % sub)
+    except MO.MotionError as e:
+        die(str(e))
+
+
+def cmd_libs(args):
+    p = PLUGIN / "vendor" / "index.json"
+    try:
+        d = json.loads(p.read_text())
+    except OSError:
+        die("vendor/ not built (scripts/vendor.sh)")
+    for lib in d["libs"]:
+        tags = " ".join('<script src="/report/_lib/%s"></script>' % f if f.endswith(".js") else '<link rel="stylesheet" href="/report/_lib/%s">' % f for f in lib["files"])
+        print("%-11s %-8s %s%s" % (lib["name"], lib["version"], tags, ("\n" + " " * 21 + lib["note"]) if lib.get("note") else ""))
+
+
+BRIDGE_HELP = """window.dsh -- available in every served HTML artifact (also as window.artifact)
+
+  await dsh.send("text")             post a user message into the owning chat (rate-limited)
+  await dsh.context(obj|text)        silent note for the agent -> 'artifact inbox'
+  await dsh.storage.get(k) / set(k,v) / delete(k) / list(prefix) / all()   JSON, server-side
+  dsh.storage.watch(k, fn)           fn(value) whenever the agent runs 'artifact state-set'
+  await dsh.ai(prompt, {system, model, json:true, maxTokens})   -> text (or parsed JSON)
+  await dsh.image(prompt) -> url     await dsh.tts(text) -> url     await dsh.video(prompt) -> url
+  await dsh.transcribe(blob) -> text dsh.compose(text) (fills the chat composer from the sidebar)
+  dsh.toast(text)                    small notification
+
+Compatibility: window.claude.complete(prompt) and window.storage.get/set/delete/list (Claude
+artifact API), window.openai.sendFollowUpMessage({prompt}) / setWidgetState(s).
+
+No JS needed for simple two-way UI:
+  <button data-dsh-send="Approve">Approve</button>     <a data-dsh-context="liked B">B</a>
+  <form data-dsh-form="submit|context" data-dsh-title="Survey"> ...fields... </form>
+
+Libraries: <script src="/report/_lib/react.js"> etc. -- run 'artifact libs'. Never use a CDN.
+Runtime errors are captured and land in 'artifact inbox' and on the sidebar's Fix button.
+"""
+
+
+def main(argv):
+    args = argv[1:]
+    if not args or args[0] in ("help", "-h", "--help"):
+        topic = args[1] if len(args) > 1 else ""
+        if topic in ("md", "markdown", "kit"):
+            subprocess.run([str(KIT), "help"])
+        elif topic in ("bridge", "js", "dsh", "api"):
+            print(BRIDGE_HELP)
+        else:
+            print(__doc__.strip())
+        return
+    cmd = args.pop(0)
+    table = {"new": cmd_new, "url": cmd_url, "render": cmd_render, "list": cmd_list, "ls": cmd_list,
+             "show": cmd_show, "info": cmd_show, "versions": cmd_versions, "diff": cmd_diff,
+             "restore": cmd_restore, "inbox": cmd_inbox, "state": cmd_state, "state-set": cmd_state_set,
+             "public": cmd_public, "media": cmd_media, "libs": cmd_libs, "motion": cmd_motion,
+             "export": lambda a: cmd_motion(["export"] + a)}
+    if cmd not in table:
+        die("unknown command %s (artifact help)" % cmd)
+    table[cmd](args)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

@@ -1,7 +1,7 @@
 {
   "name": "dsh-artifacts",
-  "version": "1.0.0",
-  "description": "DSH web plugin: an Artifacts tab in the dsh-better-sidebar panel that lists an agent-produced artifact directory and previews entries in place.",
+  "version": "2.0.0",
+  "description": "DSH web plugin: artifacts for the web GUI - sidebar tab with versions/diff/pick-and-ask, Markdown-to-page server, two-way chat bridge, local library shelf, media generation and an agent CLI.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -11,6 +11,9 @@
   },
   "files": [
     "lib",
+    "server",
+    "contrib",
+    "scripts",
     "cordis.patch.yml",
     "skills",
     "README.md",
@@ -49,7 +52,10 @@
     "artifacts",
     "sidebar"
   ],
-  "author": "Loukas \"Luca\" Tzekos",
+  "author": {
+    "name": "Loukas \"Luca\" Tzekos",
+    "url": "https://jobopportunitiesapi.org"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

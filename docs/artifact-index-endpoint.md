@@ -1,3 +1,8 @@
+> **v2 note (2026-10-07):** this endpoint is now served by `server/artifacts_server.py`
+> (see README). `/report/?list=1` keeps this shape; the richer `/report/_api/index` adds
+> kind, title, source, files, public and ETag/304, and attribution comes from the
+> incremental indexer instead of a per-request transcript scan.
+
 # The artifact index endpoint
 
 DSH does not define an artifact directory or an index route, so `dsh-artifacts`

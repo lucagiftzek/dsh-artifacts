@@ -1,101 +1,110 @@
 ---
 name: publish-artifact
-description: "Publish a file an agent produced so a human can open it in a browser: write it into the artifact directory, use an allowlisted extension, never include a secret, and reply with the URL rather than a filesystem path. Use whenever you generate an HTML report, dashboard, diagram, CSV or Markdown summary meant to be read."
+description: Publish a deliverable (report, dashboard, plan, comparison, doc, interactive tool, mini web app, media) as an artifact in ~/reports/ that opens in the Artifacts sidebar tab and at https://dsh.example.com/report/<name>. Covers the cheap Markdown path, React/HTML apps, two-way interaction with the chat, versions/undo, and image/audio/video generation. Load it whenever the deliverable is more than a one-screen answer.
 ---
 
-# Publish artifacts where a human can actually open them
+# Publishing artifacts (dsh-artifacts v2)
 
-The person you are working for is usually remote and reading you through a
-browser or a chat client. **A filesystem path is not a delivery.** "`/tmp/x.html`"
-and "`~/reports/x.html`" are both unreadable to them unless something serves the
-file.
+Artifacts are files in **~/reports/**. Whatever you write there shows up in the
+**Artifacts** sidebar tab under "This chat" within ~2 s (attribution is automatic
+for write/edit/bash and the artifact CLI, subagents included), is versioned on
+every change, and is served at https://dsh.example.com/report/<name>.
 
-If the `dsh-artifacts` sidebar tab is installed, published files also appear
-there automatically, listed newest-first and previewable in place.
+Reply with the URL as a markdown link plus one or two sentences. Never paste the
+contents into the chat too. Never put secrets in an artifact.
 
-## The convention
+## 1 - Pick the cheapest form that does the job
 
-1. **Write the artifact straight into the artifact directory** (commonly
-   `~/reports/`) using your file-writing tool, rather than writing it elsewhere
-   and copying it. On DSH this also lights up the turn's "Produced files" row,
-   which is sourced from successful `write`/`edit` calls rather than from your
-   closing prose — so the file is listed whether or not you remember to mention
-   it.
+| Need | Write | URL |
+|---|---|---|
+| report, dashboard, plan, comparison, brief | ~/reports/<name>.md | /report/<name>.html |
+| interactive choice / form / approval | .md with actions / form blocks | same |
+| custom single page, visual, tool | ~/reports/<name>.html | /report/<name>.html |
+| real web app (state, components) | artifact new <name> --type react | /report/<name>/ |
+| image / speech / video file | artifact media ... | /report/media/<file> |
 
-   It is also what makes the artifact show up under **This chat** in the sidebar's
-   Artifacts tab. That tab has to work out which of the directory's files belong
-   to the conversation it is open in, and the only evidence available is this
-   session's own transcript: a file whose path appears in one of *your* tool calls
-   is yours. Write it somewhere else and move it with a shell one-liner, or ask a
-   different session to write it, and the link between the file and this chat is
-   lost — the artifact still serves, but it only appears in the unfiltered
-   **All** list alongside everyone else's.
-2. **Use an allowlisted extension**: `.html`, `.md`, `.txt`, `.json`, `.csv`,
-   `.svg`. Anything else will be refused by the serving route.
-3. **Use a plain basename**, no directories, no leading dot.
-4. **Name it for the thing it reports**, not for the timestamp:
-   `q3-margin-analysis.html`, not `report-final-v2.html`.
-5. **Reply with the URL.** If a publisher script exists
-   (`contrib/publish-artifact` in the dsh-artifacts repo, or a host-local
-   equivalent), use it — it prints the URL and self-checks for HTTP 200.
-6. **Prefer regenerating over appending.** If the artifact already exists, write
-   the whole file again. Servers commonly inject a live-reload probe into served
-   HTML, so an open browser tab or sidebar preview refreshes itself when you do —
-   the human watches it update instead of re-clicking a link.
+**Markdown is the default.** The server renders it on the fly with artifact-kit
+(themed, light/dark, responsive). There is no render step: write the .md, link
+the .html. Starters: artifact new <name> --type report|dashboard|plan|comparison|brief|interactive.
 
-## Low-consumption default: Markdown + `artifact-kit`
+## 2 - Token discipline (this is the point)
 
-Most artifacts are a report, dashboard, plan, comparison or brief. For those, do
-not hand-write HTML. `write` a short `~/reports/<name>.md`, then run:
+- **Edit, don't rewrite.** Change an artifact with the edit tool (exact-match
+  replace) on the .md / app.jsx. Every save live-reloads the open preview. Never
+  regenerate a whole file to change a few lines.
+- **Do not re-read your own artifact** to "check" it. If you need the current
+  text of a small region, read with offset/limit.
+- **Data apart from layout.** For apps, keep data in storage or a data.json and
+  push updates with artifact state-set <name> <key> <json> - the page updates
+  itself (dsh.storage.watch) without you touching the code.
+- **Reference, don't resend.** The user can pick an element in the sidebar and
+  ask about it; you receive "[artifact x.html - element <selector> ...] question".
+  Edit just that part.
+- Use local libraries (/report/_lib/...) instead of inlining library code. Never a CDN.
 
-    artifact-kit render ~/reports/<name>.md     # prints the URL of <name>.html
+## 3 - Markdown components (artifact help md for the full list)
 
-The page it builds is themed (light and dark), self-contained, and mobile-safe.
-The `.md` stays beside it as the editable source: to change the page, edit the
-`.md` and re-render. Front matter (`title`, `subtitle`, `template`, `status`,
-`date`) is optional. `template` is one of report, dashboard, plan, comparison or
-brief. Components are fenced blocks:
+    ```kpi                 Label | Value | note | good|bad
+    ```chart bar|hbar|line|pie|donut   CSV, first column = labels
+    ```callout info|ok|warn|risk       ```timeline   when | what | detail
+    ```progress            Label | value | max | note
+    ```columns             blocks separated by a line '||'
+    ```details Title       collapsible       ```mermaid / ```math (KaTeX)
+    ```actions             Label | message to send to the chat | context
+    ```form Title [context] Label | text|textarea|number|date|select a/b|radio a/b|check a/b|range 0-10
 
-    ```kpi                 Label | Value | note | good|bad   (one tile per line)
-    ```chart bar|hbar|line CSV, first column labels, then numeric series
-    ```callout info|ok|warn|risk
-    ```timeline            when | what | detail
+Front matter: title, subtitle, template (report|dashboard|plan|comparison|brief),
+status, date, width (narrow|normal|wide|full), toc, accent. Media: ![cap](media/x.png),
+[audio](media/x.mp3) and .mp4/.webm links become players.
 
-Tables become sortable, and `- [ ]` / `- [x]` become checklists.
-`artifact-kit example <template>` prints a ready-to-fill starter.
+## 4 - Two-way interaction
 
-Hand-written HTML is still right, and fully supported, when the deliverable is
-an interactive tool, a mini app, a game or a bespoke visual that the kit's blocks
-can't express. The kit is the cheap default, not a limit.
+From the artifact to the chat:
+- actions buttons and form blocks (no JS). Default = sends a user message into
+  this chat (prefixed "[from artifact <name>]"). With "context" the payload is
+  stored silently instead.
+- In HTML/apps: dsh.send(text), dsh.context(obj), <button data-dsh-send="...">,
+  <form data-dsh-form="submit|context">.
+- Silent items, form answers and **runtime errors** land in the inbox: run
+  artifact inbox (add --clear once handled) when the user says they filled
+  something in, or when a page misbehaves.
 
-## Never put a secret in an artifact
+From the chat to the artifact: edit the file (live reload), or
+artifact state-set <name> <key> <json> for live data.
 
-These files end up one authentication hop from the internet and are meant to be
-handed to a human in a browser. Before publishing, make sure the content has
-none of:
+## 5 - Apps and hand-written HTML
 
-- API keys or tokens (`sk-ant-…`, `ghp_…`, `xox…`, anything shaped like
-  `<NAME>_API_KEY=<value>`)
-- Private keys or certificates (PEM blocks)
-- Passwords, connection strings, session cookies, launch tokens
-- Other people's personal data that was not already theirs to see
+    artifact new my-tool --type react    # my-tool/index.html + my-tool/app.jsx
 
-Report **status**, not credentials: "signed in", "grant present, expires in 6 h",
-"key loaded from the environment" — never the value. A publisher script should
-refuse these patterns; do not treat that refusal as something to work around.
+React 18 + Tailwind + in-browser JSX are pre-wired; edit only app.jsx.
+window.dsh in every served page (artifact help bridge):
+dsh.storage.get/set/delete/list/watch (persistent, server-side), dsh.ai(prompt,
+{json:true}) (LLM call, key stays server-side), dsh.image(prompt), dsh.tts(text),
+dsh.transcribe(blob), dsh.video(prompt), dsh.send, dsh.context.
+Claude-style window.claude.complete and window.storage, and OpenAI-style
+window.openai.sendFollowUpMessage also work. Libraries: artifact libs
+(react, recharts, tailwind, preact-htm, chart.js, d3, three, mermaid, katex,
+lucide, marked, papaparse, leaflet). Multi-file apps are directories with an
+index.html; .js/.css/.json/media inside are served.
 
-## If nothing serves artifacts here
+## 6 - Media
 
-Say so plainly and offer to set one up, rather than silently handing over a path.
-The `dsh-artifacts` repository ships `contrib/artifact-index-server.py`, a
-complete standalone implementation of the index and file route (metadata-only
-index, directory fence, extension allowlist, optional live reload). It has **no
-authentication of its own** — put it behind a reverse proxy that authenticates,
-and bind it to loopback.
+    artifact media image "<prompt>" [--provider mistral|dashscope|local] [--name f]
+    artifact media tts "<text>" [--voice gb_oliver_neutral]
+    artifact media stt <audio-file>
+    artifact media video "<prompt>"            # local ComfyUI, free, ~2 s clip, 10-20 min
+    artifact media video "<prompt>" --provider gemini   # METERED: only if the user asked
 
-## Testing your own work
+Image = Mistral (FLUX, ~8 s, subscription) by default. Text AI inside apps =
+Mistral (subscription). BytePlus Seedream/Seedance are not available
+(pay-as-you-go closed on purpose) and Claude has no media generation.
 
-Check against the origin that actually serves the file (usually
-`http://127.0.0.1:<port>/…`). If the public hostname hairpins back through a
-tunnel or a CDN, a failure from the box itself can be a property of that path
-rather than of your file, and looks exactly like an outage.
+## 7 - Housekeeping
+
+- artifact list, artifact show <name>, artifact versions|diff|restore <name> -
+  every change is snapshotted (40 per file); the sidebar has the same history
+  with Preview / Source / Changes.
+- Public no-login link: artifact public <name> on -> /report-public/<name>.
+  Re-check for secrets and private data first.
+- Name files after the thing (q3-margin-analysis.md), not the session or date.
+- Always include the extension in the URL.

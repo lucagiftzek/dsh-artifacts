@@ -1,34 +1,46 @@
 #!/usr/bin/env python3
-"""artifact-kit — render a short Markdown file into a finished, themed HTML artifact.
+"""artifact-kit -- Markdown in, finished themed HTML artifact out.
 
     artifact-kit render ~/reports/<name>.md     # writes ~/reports/<name>.html, prints its URL
-    artifact-kit example [report|dashboard|plan|comparison|brief]
+    artifact-kit example [report|dashboard|plan|comparison|brief|interactive]
     artifact-kit help
 
-WHY (2026-09-27): agents hand-wrote every report as full HTML: a median of 17 KB (p90
-99 KB) of output tokens, which then sat in context for the rest of the chat. Measured on
-72 recent reports, the HTML is a median 1.6x its visible text, so writing Markdown saves
-roughly 35-40% of output on a typical report, and far more on pages heavy with charts,
-tables or styling (the SVG/CSS is generated here, not written). It also removes the
-restyle-and-rewrite loops. This is the cheap default for
-reports, dashboards, plans, comparisons and briefs. Anything bespoke (an interactive
-tool, a mini app, a custom visual) is still hand-written HTML; the kit does not limit
-that.
+You usually do not need 'render' any more: the artifact server renders
+~/reports/<name>.md on the fly, so https://dsh.example.com/report/<name>.html is
+always the current page. Write or edit the .md and the open preview refreshes.
 
-Markdown is CommonMark + tables + task lists (`- [x]`). Fenced blocks named below
-become components; every other fence is a code block:
+WHY: hand-written HTML reports cost a median 17 KB of output tokens (p90 99 KB)
+and then sat in context. Markdown is ~35-40% cheaper on a typical report and far
+cheaper on pages with charts/tables (the SVG/CSS is generated here), and partial
+edits ('edit' tool on the .md) replace whole-file rewrites.
 
-    ```kpi                      one tile per line:  Label | Value | note | good|bad (last two optional;
-                                colour follows the note's +/- sign unless good/bad says otherwise)
-    ```chart bar|hbar|line      CSV: first column = labels, other columns = numeric series
-    ```callout info|ok|warn|risk  Markdown body in a tinted box
-    ```timeline                 one row per line:  when | what | detail (optional)
+Markdown = CommonMark + tables + strikethrough + task lists (- [x]).
+Fenced blocks named below become components; every other fence is code:
 
-Front matter (optional, between --- lines): title, subtitle, template, status, date.
+    kpi                     Label | Value | note | good|bad         (one tile per line)
+    chart bar|hbar|line|pie|donut   CSV: first column labels, other columns numeric series
+    callout info|ok|warn|risk       Markdown body in a tinted box
+    timeline                when | what | detail
+    progress                Label | value | max (default 100) | note
+    columns                 Markdown columns separated by a line containing only '||'
+    details <summary text>  collapsible Markdown section
+    mermaid                 diagram (flowchart, sequence, gantt, ...), rendered locally
+    math                    TeX display math (KaTeX, rendered locally)
+    actions                 Label | message sent to the chat | context  (buttons; two-way)
+    form <title>            Label | type | options  -> sends the answers to the chat
+                            types: text, textarea, number, email, date, select a/b/c,
+                            radio a/b/c, check a/b/c, range 0-10; 'form <title> context'
+                            stores answers silently for the agent instead of sending.
+
+Media: ![caption](media/x.png) images; links/images ending in .mp3/.wav/.ogg/.m4a
+become audio players and .mp4/.webm/.mov video players.
+
+Front matter (optional, between --- lines): title, subtitle, template, status, date,
+width (narrow|normal|wide|full), toc (true|false), accent (#hex).
 template: report (default) | dashboard | plan | comparison | brief.
 
-Stdlib + markdown-it-py only. Output is one self-contained file: no CDN, no external
-script, light and dark themes.
+Output: one file; components needing a library (mermaid, math) load it from
+/report/_lib on the same server -- never a CDN.
 """
 import html
 import math
@@ -39,21 +51,28 @@ from pathlib import Path
 
 from markdown_it import MarkdownIt
 
-BASE_URL = os.environ.get("ARTIFACT_BASE_URL", "https://llm.tzekos.eu/report")
+BASE_URL = os.environ.get("ARTIFACT_BASE_URL", "/report")
 ARTIFACT_DIR = Path(os.environ.get("ARTIFACT_DIR", str(Path.home() / "reports"))).resolve()
+LIB = "/report/_lib"
 TEMPLATES = ("report", "dashboard", "plan", "comparison", "brief")
-WIDTH = {"report": 880, "plan": 880, "brief": 760, "dashboard": 1240, "comparison": 1240}
-# Same refusals as contrib/publish-artifact: nothing credential-shaped leaves the box.
+WIDTH = {"report": 900, "plan": 900, "brief": 760, "dashboard": 1240, "comparison": 1200}
+WIDTH_WORDS = {"narrow": 720, "normal": 900, "wide": 1200, "full": 100000}
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-(oat|api)|-----BEGIN [A-Z ]*PRIVATE KEY-----|(sk|ghp|gho|xox[baprs])-[A-Za-z0-9]{16,}"),
     re.compile(r"(^|\s)([A-Z0-9_]*(API_KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Z0-9_]*)\s*=\s*\S{8,}"),
 ]
-SERIES = ["var(--accent)", "#4f8fbf", "#7a9a4a", "#b38b2d", "#8a6bb8", "#5f9e96"]
+SERIES = ["var(--accent)", "#4f8fbf", "#7a9a4a", "#b38b2d", "#8a6bb8", "#5f9e96", "#c0607a", "#6f7f8f"]
+AUDIO_EXT = (".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus")
+VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v")
+FENCE_RX = re.compile(r"(?ms)^\x60\x60\x60[^\n]*\n(.*?)^\x60\x60\x60")
 
 esc = html.escape
 
 
-# ── front matter ──────────────────────────────────────────────────────────────
+class Refused(ValueError):
+    pass
+
+
 def split_front_matter(text):
     meta = {}
     if text.startswith("---\n"):
@@ -67,10 +86,23 @@ def split_front_matter(text):
     return meta, text
 
 
-# ── components ────────────────────────────────────────────────────────────────
 def cells(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
+
+def text_w(s, px=12):
+    """Rough rendered width of a label in px (SVG text cannot be measured server-side)."""
+    wide = sum(1 for ch in s if ch.isupper() or ch in "MWmw@%")
+    # 0.64 em/char is measured on common fonts (system-ui renders wider than
+    # the classic 0.5-0.55 rule of thumb); overestimating only costs margin.
+    return (len(s) * 0.64 + wide * 0.16) * px
+
+
+def clip(s, n):
+    return s if len(s) <= n else s[: n - 1] + "\u2026"
+
+
+# -- components ------------------------------------------------------------------
 
 def render_kpi(body, md):
     tiles = []
@@ -82,19 +114,19 @@ def render_kpi(body, md):
         tone = ""
         if verdict in ("good", "bad"):
             tone = " up" if verdict == "good" else " down"
-        elif re.match(r"^[+▲↑]", note):
+        elif re.match(r"^[+\u25b2\u2191]", note):
             tone = " up"
-        elif re.match(r"^[-−▼↓]", note):
+        elif re.match(r"^[-\u2212\u25bc\u2193]", note):
             tone = " down"
-        tiles.append(f'<div class="kpi"><div class="kpi-label">{md.renderInline(label)}</div>'
-                     f'<div class="kpi-value">{md.renderInline(value)}</div>'
-                     + (f'<div class="kpi-note{tone}">{md.renderInline(note)}</div>' if note else "")
-                     + "</div>")
-    return f'<div class="kpis">{"".join(tiles)}</div>'
+        long = " long" if len(value) > 10 else ""
+        tiles.append('<div class="kpi"><div class="kpi-label">%s</div><div class="kpi-value%s">%s</div>%s</div>' % (
+            md.renderInline(label), long, md.renderInline(value),
+            '<div class="kpi-note%s">%s</div>' % (tone, md.renderInline(note)) if note else ""))
+    return '<div class="kpis">%s</div>' % "".join(tiles)
 
 
 def number(s):
-    s = s.replace(",", "").replace("%", "").replace("€", "").replace("$", "").strip()
+    s = s.replace(",", "").replace("%", "").replace("\u20ac", "").replace("$", "").replace("\u00a3", "").strip()
     try:
         return float(s)
     except ValueError:
@@ -112,15 +144,44 @@ def nice_max(v):
 
 
 def fmt(v):
+    if abs(v) >= 1e9:
+        return ("%.1fB" % (v / 1e9)).replace(".0B", "B")
     if abs(v) >= 1e6:
-        return f"{v/1e6:.1f}M".replace(".0M", "M")
+        return ("%.1fM" % (v / 1e6)).replace(".0M", "M")
     if abs(v) >= 1e3:
-        return f"{v/1e3:.1f}k".replace(".0k", "k")
-    return f"{v:g}"
+        return ("%.1fk" % (v / 1e3)).replace(".0k", "k")
+    return "%g" % round(v, 2)
+
+
+def parse_rows(body):
+    """Rows of a chart block: pipe- or comma-separated, quotes respected.
+
+    A row with MORE cells than the header almost always means the label itself
+    contained a comma ("Paris, FR,12"), so the surplus is folded back into the
+    label instead of shifting every value one column to the right.
+    """
+    import csv
+    raw = [l for l in body.strip().splitlines() if l.strip()]
+    rows = []
+    for l in raw:
+        if "|" in l:
+            rows.append(cells(l))
+        else:
+            rows.append([c.strip() for c in next(csv.reader([l], skipinitialspace=True))])
+    if rows:
+        width = len(rows[0])
+        fixed = [rows[0]]
+        for r in rows[1:]:
+            if len(r) > width > 1:
+                cut = len(r) - (width - 1)
+                r = [", ".join(r[:cut])] + r[cut:]
+            fixed.append(r)
+        rows = fixed
+    return rows
 
 
 def render_chart(kind, body):
-    rows = [cells(l.replace(",", "|")) if "|" not in l else cells(l) for l in body.strip().splitlines() if l.strip()]
+    rows = parse_rows(body)
     if len(rows) < 2:
         return '<p class="err">chart: need a header row and at least one data row</p>'
     header, data = rows[0], rows[1:]
@@ -131,55 +192,116 @@ def render_chart(kind, body):
         series.append((name, [v if v is not None else 0 for v in vals]))
     if not series:
         return '<p class="err">chart: need at least one numeric column</p>'
-    top = nice_max(max(max(v for v in s[1]) for s in series) or 1)
-    legend = "".join(f'<span><i style="background:{SERIES[i % len(SERIES)]}"></i>{esc(n)}</span>'
-                     for i, (n, _) in enumerate(series)) if len(series) > 1 else ""
+    multi = len(series) > 1
+    legend = "".join('<span><i style="background:%s"></i>%s</span>' % (SERIES[i % len(SERIES)], esc(n))
+                     for i, (n, _) in enumerate(series)) if multi else ""
+
+    if kind in ("pie", "donut"):
+        vals = series[0][1]
+        total = sum(v for v in vals if v > 0) or 1
+        r, cx, cy = 90, 110, 110
+        out, a0 = [], -math.pi / 2
+        for i, v in enumerate(vals):
+            if v <= 0:
+                continue
+            a1 = a0 + 2 * math.pi * v / total
+            large = 1 if a1 - a0 > math.pi else 0
+            x0, y0 = cx + r * math.cos(a0), cy + r * math.sin(a0)
+            x1, y1 = cx + r * math.cos(a1), cy + r * math.sin(a1)
+            col = SERIES[i % len(SERIES)]
+            tip = '<title>%s: %s (%.0f%%)</title>' % (esc(labels[i]), fmt(v), 100 * v / total)
+            if v >= total:
+                out.append('<circle cx="%d" cy="%d" r="%d" fill="%s">%s</circle>' % (cx, cy, r, col, tip))
+            else:
+                out.append('<path d="M%d,%d L%.1f,%.1f A%d,%d 0 %d 1 %.1f,%.1f Z" fill="%s">%s</path>'
+                           % (cx, cy, x0, y0, r, r, large, x1, y1, col, tip))
+            a0 = a1
+        hole = '<circle cx="%d" cy="%d" r="52" fill="var(--panel)"/>' % (cx, cy) if kind == "donut" else ""
+        leg = "".join('<span><i style="background:%s"></i>%s <b>%.0f%%</b></span>' % (SERIES[i % len(SERIES)], esc(l), 100 * max(v, 0) / total)
+                      for i, (l, v) in enumerate(zip(labels, vals)))
+        return ('<figure class="chart pie"><svg viewBox="0 0 220 220" role="img">%s%s</svg><figcaption>%s</figcaption></figure>'
+                % ("".join(out), hole, leg))
+
+    peak = max(max(v for v in s[1]) for s in series) or 1
+    tick = nice_max(peak / 5)
+    ticks = max(1, math.ceil(peak / tick - 1e-9))
+    top = tick * ticks
     if kind == "hbar":
-        rowh, lw, w = 26, 150, 640
-        h = rowh * len(labels) * max(1, len(series)) + 10
-        out = []
-        y = 5
+        fs = 13
+        lab_px = min(320, max(60, max(text_w(l, fs) for l in labels) + 14))
+        maxc = int((lab_px - 14) / (fs * 0.6)) + 2
+        rowh = 24 if multi else 28
+        w = max(640, int(lab_px + 420))
+        val_px = max(text_w(fmt(v), fs) for s in series for v in s[1]) + 12
+        h = rowh * len(labels) * len(series) + 8 * len(labels) + 10
+        out, y = [], 5
         for li, lab in enumerate(labels):
-            out.append(f'<text x="{lw-8}" y="{y + rowh*len(series)/2 + 4}" text-anchor="end" class="t">{esc(lab[:24])}</text>')
+            out.append('<text x="%.0f" y="%.1f" text-anchor="end" class="t"><title>%s</title>%s</text>'
+                       % (lab_px - 8, y + rowh * len(series) / 2 + 4, esc(lab), esc(clip(lab, maxc))))
             for si, (n, vals) in enumerate(series):
-                bw = (w - lw - 60) * vals[li] / top
-                out.append(f'<rect x="{lw}" y="{y+3}" width="{bw:.1f}" height="{rowh-8}" fill="{SERIES[si % len(SERIES)]}">'
-                           f'<title>{esc(lab)} · {esc(n)}: {fmt(vals[li])}</title></rect>'
-                           f'<text x="{lw+bw+6:.1f}" y="{y+rowh/2+3}" class="t">{fmt(vals[li])}</text>')
+                bw = (w - lab_px - val_px - 8) * max(vals[li], 0) / top
+                out.append('<rect x="%.0f" y="%d" width="%.1f" height="%d" rx="2" fill="%s"><title>%s \u00b7 %s: %s</title></rect>'
+                           '<text x="%.1f" y="%.1f" class="t">%s</text>'
+                           % (lab_px, y + 3, bw, rowh - 7, SERIES[si % len(SERIES)], esc(lab), esc(n), fmt(vals[li]),
+                              lab_px + bw + 6, y + rowh / 2 + 4, fmt(vals[li])))
                 y += rowh
-        svg = f'<svg viewBox="0 0 {w} {h}" role="img">{"".join(out)}</svg>'
+            y += 8
+        svg = '<svg viewBox="0 0 %d %d" role="img">%s</svg>' % (w, h, "".join(out))
     else:
-        w, h, l, b, t = 720, 260, 48, 40, 12
-        pw, ph = w - l - 12, h - b - t
-        grid = []
-        for k in range(5):
-            gy = t + ph - ph * k / 4
-            grid.append(f'<line x1="{l}" x2="{w-12}" y1="{gy:.1f}" y2="{gy:.1f}" class="g"/>'
-                        f'<text x="{l-6}" y="{gy+4:.1f}" text-anchor="end" class="t">{fmt(top*k/4)}</text>')
+        fs = 12
         n = len(labels)
+        w = max(720, min(1600, n * 46))
+        longest = max(text_w(l, fs) for l in labels)
+        step_guess = (w - 60) / max(n, 1)
+        rotate = longest > step_guess * 0.92
+        b = 30 if not rotate else int(min(160, longest * 0.63 + 20))
+        maxc = 28 if rotate else max(4, int(step_guess / (fs * 0.6)))
+        l_axis = int(max(text_w(fmt(top), fs), 24) + 14)
+        if rotate:
+            # A rotated first label hangs left of its tick: make room for it.
+            first = min(text_w(clip(labels[0], maxc), fs), 230) * 0.79
+            l_axis = int(max(l_axis, min(first - step_guess / 2 + 16, 220)))
+        t, h = 12, 270 + (b - 30)
+        pw, ph = w - l_axis - 12, h - b - t
+        grid = []
+        for k in range(ticks + 1):
+            gy = t + ph - ph * k / ticks
+            grid.append('<line x1="%d" x2="%d" y1="%.1f" y2="%.1f" class="g"/><text x="%d" y="%.1f" text-anchor="end" class="t">%s</text>'
+                        % (l_axis, w - 12, gy, gy, l_axis - 6, gy + 4, fmt(tick * k)))
         step = pw / n
-        every = max(1, math.ceil(n / 12))
-        xl = "".join(f'<text x="{l + step*i + step/2:.1f}" y="{h-b+18}" text-anchor="middle" class="t">{esc(lab[:12])}</text>'
-                     for i, lab in enumerate(labels) if i % every == 0)
+        every = max(1, math.ceil(n / (24 if rotate else 14)))
+        xl = []
+        for i, lab in enumerate(labels):
+            if i % every:
+                continue
+            x = l_axis + step * i + step / 2
+            if rotate:
+                xl.append('<text x="%.1f" y="%d" text-anchor="end" transform="rotate(-38 %.1f %d)" class="t"><title>%s</title>%s</text>'
+                          % (x, h - b + 14, x, h - b + 14, esc(lab), esc(clip(lab, maxc))))
+            else:
+                xl.append('<text x="%.1f" y="%d" text-anchor="middle" class="t"><title>%s</title>%s</text>'
+                          % (x, h - b + 18, esc(lab), esc(clip(lab, maxc))))
         marks = []
         if kind == "line":
             for si, (name, vals) in enumerate(series):
-                pts = " ".join(f"{l + step*i + step/2:.1f},{t + ph - ph*v/top:.1f}" for i, v in enumerate(vals))
                 col = SERIES[si % len(SERIES)]
-                marks.append(f'<polyline points="{pts}" fill="none" stroke="{col}" stroke-width="2.5"/>')
-                marks += [f'<circle cx="{l + step*i + step/2:.1f}" cy="{t + ph - ph*v/top:.1f}" r="3.5" fill="{col}">'
-                          f'<title>{esc(labels[i])} · {esc(name)}: {fmt(v)}</title></circle>' for i, v in enumerate(vals)]
+                pts = " ".join("%.1f,%.1f" % (l_axis + step * i + step / 2, t + ph - ph * v / top) for i, v in enumerate(vals))
+                marks.append('<polyline points="%s" fill="none" stroke="%s" stroke-width="2.5" stroke-linejoin="round"/>' % (pts, col))
+                if n <= 60:
+                    marks += ['<circle cx="%.1f" cy="%.1f" r="3.5" fill="%s"><title>%s \u00b7 %s: %s</title></circle>'
+                              % (l_axis + step * i + step / 2, t + ph - ph * v / top, col, esc(labels[i]), esc(name), fmt(v))
+                              for i, v in enumerate(vals)]
         else:
             gw = min(step * 0.72, 56 * len(series))
             bw = gw / len(series)
             for i in range(n):
                 for si, (name, vals) in enumerate(series):
-                    bh = ph * vals[i] / top
-                    x = l + step*i + (step-gw)/2 + si*bw
-                    marks.append(f'<rect x="{x:.1f}" y="{t+ph-bh:.1f}" width="{bw-1:.1f}" height="{bh:.1f}" fill="{SERIES[si % len(SERIES)]}">'
-                                 f'<title>{esc(labels[i])} · {esc(name)}: {fmt(vals[i])}</title></rect>')
-        svg = f'<svg viewBox="0 0 {w} {h}" role="img">{"".join(grid)}{"".join(marks)}{xl}</svg>'
-    return f'<figure class="chart">{svg}' + (f'<figcaption>{legend}</figcaption>' if legend else "") + "</figure>"
+                    bh = ph * max(vals[i], 0) / top
+                    x = l_axis + step * i + (step - gw) / 2 + si * bw
+                    marks.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="1.5" fill="%s"><title>%s \u00b7 %s: %s</title></rect>'
+                                 % (x, t + ph - bh, max(bw - 1, 0.5), bh, SERIES[si % len(SERIES)], esc(labels[i]), esc(name), fmt(vals[i])))
+        svg = '<svg viewBox="0 0 %d %d" role="img">%s%s%s</svg>' % (w, h, "".join(grid), "".join(marks), "".join(xl))
+    return '<figure class="chart">%s%s</figure>' % (svg, '<figcaption>%s</figcaption>' % legend if legend else "")
 
 
 def render_timeline(body, md):
@@ -188,29 +310,120 @@ def render_timeline(body, md):
         if not line.strip():
             continue
         c = cells(line) + ["", ""]
-        items.append(f'<li><span class="when">{md.renderInline(c[0])}</span><div><b>{md.renderInline(c[1])}</b>'
-                     + (f'<p>{md.renderInline(c[2])}</p>' if c[2] else "") + "</div></li>")
-    return f'<ol class="timeline">{"".join(items)}</ol>'
+        items.append('<li><span class="when">%s</span><div><b>%s</b>%s</div></li>' % (
+            md.renderInline(c[0]), md.renderInline(c[1]), '<p>%s</p>' % md.renderInline(c[2]) if c[2] else ""))
+    return '<ol class="timeline">%s</ol>' % "".join(items)
 
 
-def build_md():
+def render_progress(body, md):
+    rows = []
+    for line in body.strip().splitlines():
+        if not line.strip():
+            continue
+        c = cells(line) + ["", "", ""]
+        v = number(c[1]) or 0
+        mx = number(c[2]) or 100
+        pct = max(0, min(100, 100 * v / mx if mx else 0))
+        shown = esc(c[1]) + ((" / " + esc(c[2])) if c[2] else ("" if "%" in c[1] else "%"))
+        rows.append('<div class="prog"><div class="prog-h"><span>%s</span><span class="prog-v">%s</span></div>'
+                    '<div class="bar"><i style="width:%.1f%%"></i></div>%s</div>' % (
+                        md.renderInline(c[0]), shown, pct,
+                        '<div class="prog-n">%s</div>' % md.renderInline(c[3]) if c[3] else ""))
+    return '<div class="progs">%s</div>' % "".join(rows)
+
+
+def render_actions(body, md):
+    btns = []
+    for line in body.strip().splitlines():
+        if not line.strip():
+            continue
+        c = cells(line) + ["", ""]
+        label, msg, mode = c[0], c[1] or c[0], c[2].lower()
+        attr = "data-dsh-context" if mode == "context" else "data-dsh-send"
+        btns.append('<button type="button" class="act" %s="%s">%s</button>' % (attr, esc(msg, quote=True), md.renderInline(label)))
+    return '<div class="actions">%s</div>' % "".join(btns)
+
+
+def render_form(arg_rest, body, md):
+    words = arg_rest.split()
+    mode = "context" if words and words[-1].lower() == "context" else "submit"
+    if mode == "context":
+        words = words[:-1]
+    title = " ".join(words) or "Form"
+    fields = []
+    for i, line in enumerate(body.strip().splitlines()):
+        if not line.strip():
+            continue
+        c = cells(line) + ["", ""]
+        label, spec = c[0], (c[1] or "text").strip()
+        kind, _, opts = spec.partition(" ")
+        kind = kind.lower()
+        opts = opts or c[2]
+        name = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or "f%d" % i
+        L = md.renderInline(label)
+        if kind == "textarea":
+            ctl = '<textarea name="%s" rows="3"></textarea>' % name
+        elif kind == "select":
+            ctl = '<select name="%s">%s</select>' % (name, "".join('<option>%s</option>' % esc(o.strip()) for o in opts.split("/") if o.strip()))
+        elif kind in ("radio", "check", "checkbox"):
+            t = "radio" if kind == "radio" else "checkbox"
+            ctl = '<span class="opts">%s</span>' % "".join(
+                '<label class="opt"><input type="%s" name="%s" value="%s"> %s</label>' % (t, name, esc(o.strip(), quote=True), esc(o.strip()))
+                for o in opts.split("/") if o.strip())
+            fields.append('<fieldset class="field"><legend>%s</legend>%s</fieldset>' % (L, ctl))
+            continue
+        elif kind == "range":
+            lo, _, hi = (opts or "0-10").partition("-")
+            ctl = ('<input type="range" name="%s" min="%s" max="%s" oninput="this.nextElementSibling.textContent=this.value"><output></output>'
+                   % (name, esc(lo or "0"), esc(hi or "10")))
+        elif kind in ("number", "email", "date", "time", "url", "text", "color"):
+            ctl = '<input type="%s" name="%s">' % (kind, name)
+        else:
+            ctl = '<input type="text" name="%s">' % name
+        fields.append('<label class="field"><span>%s</span>%s</label>' % (L, ctl))
+    btn = "Save for the agent" if mode == "context" else "Send to chat"
+    return ('<form class="dsh-form" data-dsh-form="%s" data-dsh-title="%s"><div class="form-t">%s</div>%s'
+            '<div class="form-b"><button type="submit" class="act primary">%s</button></div></form>'
+            % (mode, esc(title, quote=True), esc(title), "".join(fields), btn))
+
+
+def build_md(state):
     md = MarkdownIt("commonmark", {"html": True, "linkify": False, "typographer": True}).enable(["table", "strikethrough"])
     default_fence = md.renderer.rules.get("fence")
 
     def fence(tokens, idx, options, env):
         tok = tokens[idx]
-        info = tok.info.strip().split()
-        name = info[0].lower() if info else ""
-        arg = info[1].lower() if len(info) > 1 else ""
+        info = tok.info.strip()
+        parts = info.split(None, 1)
+        name = parts[0].lower() if parts else ""
+        rest = parts[1] if len(parts) > 1 else ""
+        arg = rest.split()[0].lower() if rest else ""
         if name == "kpi":
             return render_kpi(tok.content, md)
         if name == "chart":
             return render_chart(arg or "bar", tok.content)
         if name == "timeline":
             return render_timeline(tok.content, md)
+        if name == "progress":
+            return render_progress(tok.content, md)
         if name == "callout":
             tone = arg if arg in ("info", "ok", "warn", "risk") else "info"
-            return f'<aside class="callout {tone}">{md.render(tok.content)}</aside>'
+            return '<aside class="callout %s">%s</aside>' % (tone, md.render(tok.content))
+        if name == "columns":
+            cols = re.split(r"(?m)^\s*\|\|\s*$", tok.content)
+            return '<div class="cols">%s</div>' % "".join('<div class="col">%s</div>' % md.render(c) for c in cols)
+        if name == "details":
+            return '<details><summary>%s</summary>%s</details>' % (md.renderInline(rest or "Details"), md.render(tok.content))
+        if name == "mermaid":
+            state["mermaid"] = True
+            return '<pre class="mermaid">%s</pre>' % esc(tok.content)
+        if name in ("math", "latex", "tex"):
+            state["math"] = True
+            return '<div class="math-display">%s</div>' % esc(tok.content.strip())
+        if name == "actions":
+            return render_actions(tok.content, md)
+        if name == "form":
+            return render_form(rest, tok.content, md)
         return default_fence(tokens, idx, options, env)
 
     md.renderer.rules["fence"] = fence
@@ -221,11 +434,21 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "s"
 
 
+def media_tag(src, alt):
+    low = src.lower().split("?")[0]
+    cap = "<figcaption>%s</figcaption>" % alt if alt else ""
+    if low.endswith(AUDIO_EXT):
+        return '<figure class="media"><audio controls preload="metadata" src="%s"></audio>%s</figure>' % (src, cap)
+    if low.endswith(VIDEO_EXT):
+        return '<figure class="media"><video controls preload="metadata" playsinline src="%s"></video>%s</figure>' % (src, cap)
+    return None
+
+
 def post_process(body):
-    # task lists
     body = re.sub(r"<li>\[ \]\s*", '<li class="task"><span class="box"></span>', body)
-    body = re.sub(r"<li>\[[xX]\]\s*", '<li class="task done"><span class="box">✓</span>', body)
-    # heading anchors + TOC
+    body = re.sub(r"<li>\[[xX]\]\s*", '<li class="task done"><span class="box">\u2713</span>', body)
+    body = re.sub(r'<img src="([^"]+)" alt="([^"]*)"\s*/?>', lambda m: media_tag(m.group(1), m.group(2)) or m.group(0), body)
+    body = re.sub(r'<a href="([^"]+)">([^<]*)</a>', lambda m: media_tag(m.group(1), m.group(2)) or m.group(0), body)
     toc = []
 
     def anchor(m):
@@ -234,93 +457,157 @@ def post_process(body):
         sid = slug(html.unescape(text))
         if level == "2":
             toc.append((sid, text))
-        return f'<h{level} id="{sid}">{inner}</h{level}>'
+        return '<h%s id="%s">%s</h%s>' % (level, sid, inner, level)
     body = re.sub(r"<h([23])>(.*?)</h\1>", anchor, body)
     body = body.replace("<table>", '<div class="tw"><table class="sortable">').replace("</table>", "</table></div>")
     return body, toc
 
 
+def auto_width(template, body_md, meta):
+    w = meta.get("width", "").lower()
+    if w in WIDTH_WORDS:
+        return WIDTH_WORDS[w]
+    if w.isdigit():
+        return max(480, int(w))
+    base = WIDTH[template]
+    # Wide tables or long code lines need room; a short brief does not.
+    cols = max((l.count("|") - 1 for l in body_md.splitlines() if l.strip().startswith("|")), default=0)
+    longest_code = max((len(x) for blk in FENCE_RX.findall(body_md) for x in blk.splitlines()), default=0)
+    if cols >= 7 or longest_code > 110:
+        base = max(base, 1200)
+    elif cols >= 5:
+        base = max(base, 1040)
+    return base
+
+
 CSS = """
-:root{--bg:#f7f5f2;--panel:#fff;--ink:#1c1a18;--muted:#6b645d;--line:#e3ddd6;--accent:#c1553a;--ok:#3f7d4e;--warn:#b07a12;--risk:#b3372b;--info:#3d6f99}
+:root{--bg:#f7f5f2;--panel:#fff;--ink:#1c1a18;--muted:#6b645d;--line:#e3ddd6;--accent:#c1553a;--ok:#3f7d4e;--warn:#b07a12;--risk:#b3372b;--info:#3d6f99;color-scheme:light dark}
 @media (prefers-color-scheme:dark){:root{--bg:#141210;--panel:#1c1917;--ink:#ece6df;--muted:#a39a90;--line:#2f2a26;--accent:#d8694c;--ok:#6fb07f;--warn:#d9a441;--risk:#e06a5c;--info:#79a7cf}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:var(--w);margin:0 auto;padding:32px 16px 64px}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;overflow-wrap:break-word}
+main{max-width:var(--w);margin:0 auto;padding:clamp(16px,4vw,32px) clamp(12px,3vw,20px) 64px;min-width:0}
+main>*{min-width:0}
 header.top{border-bottom:2px solid var(--accent);padding-bottom:16px;margin-bottom:24px}
 .brand{font:600 11px/1 ui-monospace,monospace;letter-spacing:.14em;color:var(--accent);text-transform:uppercase}
-h1{font-size:30px;line-height:1.2;margin:10px 0 6px}.sub{color:var(--muted);margin:0}
+h1{font-size:clamp(22px,4.2vw,30px);line-height:1.2;margin:10px 0 6px}.sub{color:var(--muted);margin:0}
+h1,h2,h3,h4{overflow-wrap:anywhere}
 .meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:13px;color:var(--muted)}
 .badge{border:1px solid var(--accent);color:var(--accent);padding:1px 8px;font:600 12px ui-monospace,monospace}
-h2{font-size:21px;margin:36px 0 10px;padding-top:8px;border-top:1px solid var(--line)}h3{font-size:17px;margin:24px 0 8px}
-a{color:var(--accent)}code{font:14px ui-monospace,monospace;background:var(--panel);border:1px solid var(--line);padding:0 4px}
-pre{background:var(--panel);border:1px solid var(--line);padding:12px;overflow:auto}pre code{border:0;padding:0}
+h2{font-size:clamp(18px,3vw,21px);margin:36px 0 10px;padding-top:8px;border-top:1px solid var(--line)}h3{font-size:17px;margin:24px 0 8px}
+p,li{overflow-wrap:break-word}a{color:var(--accent);overflow-wrap:anywhere}
+code{font:.875em ui-monospace,monospace;background:var(--panel);border:1px solid var(--line);padding:0 4px;overflow-wrap:anywhere}
+pre{background:var(--panel);border:1px solid var(--line);padding:12px;overflow:auto;max-width:100%}pre code{border:0;padding:0;overflow-wrap:normal;white-space:pre}
 blockquote{margin:16px 0;padding:4px 16px;border-left:3px solid var(--line);color:var(--muted)}
-.tw{overflow-x:auto;margin:16px 0}table{border-collapse:collapse;width:100%;font-size:14px;background:var(--panel)}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-weight:600;border-bottom:2px solid var(--line);cursor:pointer;white-space:nowrap}th[data-dir]::after{content:attr(data-dir);color:var(--accent);margin-left:4px}
-.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin:16px 0}
-.kpi{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--accent);padding:12px 14px}
-.kpi-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.kpi-value{font-size:26px;font-weight:650;line-height:1.3}
+img,svg,video{max-width:100%;height:auto}img{display:block;margin:12px auto;border-radius:4px}
+.tw{overflow-x:auto;margin:16px 0;max-width:100%}table{border-collapse:collapse;width:100%;font-size:14px;background:var(--panel)}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;min-width:6ch}
+td{overflow-wrap:anywhere}
+th{font-weight:600;border-bottom:2px solid var(--line);cursor:pointer;overflow-wrap:normal;hyphens:auto}th[data-dir]::after{content:attr(data-dir);color:var(--accent);margin-left:4px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));gap:12px;margin:16px 0}
+.kpi{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--accent);padding:12px 14px;min-width:0}
+.kpi-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi-value{font-size:clamp(20px,3.2vw,26px);font-weight:650;line-height:1.25;overflow-wrap:anywhere}.kpi-value.long{font-size:clamp(16px,2.4vw,20px)}
 .kpi-note{font-size:13px;color:var(--muted)}.kpi-note.up{color:var(--ok)}.kpi-note.down{color:var(--risk)}
 .callout{margin:16px 0;padding:10px 16px;border:1px solid var(--line);border-left:4px solid var(--info);background:var(--panel)}
 .callout.ok{border-left-color:var(--ok)}.callout.warn{border-left-color:var(--warn)}.callout.risk{border-left-color:var(--risk)}.callout p{margin:6px 0}
-.chart{margin:16px 0;background:var(--panel);border:1px solid var(--line);padding:12px}.chart svg{width:100%;height:auto;display:block}
+.chart{margin:16px 0;background:var(--panel);border:1px solid var(--line);padding:12px;overflow-x:auto}.chart svg{width:100%;min-width:420px;height:auto;display:block}
+.chart.pie{display:flex;gap:18px;align-items:center;flex-wrap:wrap}.chart.pie svg{width:200px;min-width:0;flex:0 0 auto}
 .chart .t{font:12px system-ui,sans-serif;fill:var(--muted)}.chart .g{stroke:var(--line)}
-.chart figcaption{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:6px}.chart figcaption i{display:inline-block;width:10px;height:10px;margin-right:5px}
+.chart figcaption{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-top:6px}.chart.pie figcaption{flex-direction:column;flex:1;min-width:140px}
+.chart figcaption i{display:inline-block;width:10px;height:10px;margin-right:5px}
 .timeline{list-style:none;padding:0;margin:16px 0;border-left:2px solid var(--line)}
-.timeline li{display:grid;grid-template-columns:130px 1fr;gap:12px;padding:6px 0 10px 16px;position:relative}
+.timeline li{display:grid;grid-template-columns:fit-content(38%) minmax(0,1fr);gap:4px 14px;padding:6px 0 10px 16px;position:relative}
 .timeline li::before{content:"";position:absolute;left:-6px;top:13px;width:10px;height:10px;background:var(--accent)}
-.timeline .when{font:13px ui-monospace,monospace;color:var(--muted);padding-top:2px}.timeline p{margin:2px 0 0;color:var(--muted)}
+.timeline .when{font:13px ui-monospace,monospace;color:var(--muted);padding-top:2px;min-width:72px}.timeline p{margin:2px 0 0;color:var(--muted)}
+.progs{margin:16px 0;display:grid;gap:10px}.prog-h{display:flex;justify-content:space-between;gap:12px;font-size:14px}.prog-v{color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent);border-radius:4px}.prog-n{font-size:12.5px;color:var(--muted)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(260px,100%),1fr));gap:18px;margin:12px 0}.col{min-width:0}
+details{margin:12px 0;border:1px solid var(--line);background:var(--panel);padding:6px 12px}summary{cursor:pointer;font-weight:600}
 li.task{list-style:none;margin-left:-22px}.box{display:inline-block;width:16px;height:16px;border:1.5px solid var(--muted);margin-right:8px;text-align:center;font-size:12px;line-height:14px;vertical-align:-2px}
 li.task.done{color:var(--muted)}li.task.done .box{border-color:var(--ok);color:var(--ok)}
-nav.toc{font-size:14px;margin:0 0 20px;padding:10px 14px;background:var(--panel);border:1px solid var(--line)}nav.toc a{margin-right:14px;white-space:nowrap}
+nav.toc{font-size:14px;margin:0 0 20px;padding:10px 14px;background:var(--panel);border:1px solid var(--line);display:flex;flex-wrap:wrap;gap:4px 14px}nav.toc a{max-width:100%}
+.media{margin:16px 0}.media audio{width:100%}.media video{width:100%;border-radius:4px;background:#000}.media figcaption{font-size:13px;color:var(--muted);margin-top:4px}
+.mermaid{background:var(--panel);text-align:center}.math-display{overflow-x:auto;margin:14px 0;text-align:center}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.act{font:inherit;font-size:14px;padding:7px 14px;border:1px solid var(--accent);color:var(--accent);background:var(--panel);border-radius:6px;cursor:pointer}
+.act:hover,.act.primary{background:var(--accent);color:#fff}.act[data-dsh-done]{opacity:.6}
+.dsh-form{margin:16px 0;padding:14px 16px;border:1px solid var(--line);background:var(--panel);display:grid;gap:12px}.form-t{font-weight:650}
+.field{display:grid;gap:4px;font-size:14px;border:0;padding:0;margin:0}.field>span,.field legend{color:var(--muted);font-size:13px;padding:0}
+.field input:not([type=radio]):not([type=checkbox]),.field textarea,.field select{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:5px;width:100%}
+.opts{display:flex;flex-wrap:wrap;gap:6px 14px}.opt{display:inline-flex;gap:5px;align-items:center}.form-b{display:flex;justify-content:flex-end}
+form[data-dsh-done] .form-b::before{content:"sent";color:var(--ok);margin-right:auto;align-self:center;font-size:13px}
 .err{color:var(--risk)}footer{margin-top:48px;font-size:12px;color:var(--muted)}
-@media (max-width:640px){h1{font-size:24px}.timeline li{grid-template-columns:1fr}}
+@media (max-width:640px){.timeline li{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}}
+@media print{body{background:#fff}nav.toc,.actions,.dsh-form .form-b{display:none}.chart,.kpi,.callout{break-inside:avoid}}
 """
 
-JS = """document.querySelectorAll('table.sortable th').forEach((th,i)=>th.addEventListener('click',()=>{const tb=th.closest('table').tBodies[0];if(!tb)return;const d=th.dataset.dir==='▲'?'▼':'▲';th.closest('tr').querySelectorAll('th').forEach(x=>delete x.dataset.dir);th.dataset.dir=d;const n=v=>parseFloat(v.replace(/[^0-9.\\-]/g,''));[...tb.rows].sort((a,b)=>{const x=a.cells[i]?.innerText||'',y=b.cells[i]?.innerText||'';const r=isNaN(n(x))||isNaN(n(y))?x.localeCompare(y):n(x)-n(y);return d==='▲'?r:-r}).forEach(r=>tb.appendChild(r))}));"""
+JS = """document.querySelectorAll('table.sortable th').forEach((th,i)=>th.addEventListener('click',()=>{const tb=th.closest('table').tBodies[0];if(!tb)return;const d=th.dataset.dir==='\u25b2'?'\u25bc':'\u25b2';th.closest('tr').querySelectorAll('th').forEach(x=>delete x.dataset.dir);th.dataset.dir=d;const n=v=>parseFloat(v.replace(/[^0-9.\\-]/g,''));[...tb.rows].sort((a,b)=>{const x=a.cells[i]?.innerText||'',y=b.cells[i]?.innerText||'';const r=isNaN(n(x))||isNaN(n(y))?x.localeCompare(y):n(x)-n(y);return d==='\u25b2'?r:-r}).forEach(r=>tb.appendChild(r))}));"""
 
 
-def render(src: Path) -> Path:
-    text = src.read_text(encoding="utf-8")
+def render_text(text, name="artifact.md"):
+    """Markdown source -> complete HTML page (str). Raises Refused on secrets."""
     for pat in SECRET_PATTERNS:
         if pat.search(text):
-            sys.exit(f"refused: {src.name} contains a credential-shaped string; report status, never values")
+            raise Refused("%s contains a credential-shaped string; report status, never values" % name)
     meta, body_md = split_front_matter(text)
     template = meta.get("template", "report").lower()
     if template not in TEMPLATES:
-        sys.exit(f"unknown template '{template}'; use one of: {', '.join(TEMPLATES)}")
-    md = build_md()
+        template = "report"
+    state = {}
+    md = build_md(state)
     title = meta.get("title")
     m = re.match(r"^#\s+(.+)\n", body_md)
     if m and not title:
         title = m.group(1).strip()
     if m:
         body_md = body_md[m.end():]
-    title = title or src.stem.replace("-", " ").title()
+    title = title or Path(name).stem.replace("-", " ").title()
     body, toc = post_process(md.render(body_md))
-    show_toc = template in ("report", "plan", "comparison") and len(toc) >= 3
-    toc_html = ('<nav class="toc">' + "".join(f'<a href="#{i}">{t}</a>' for i, t in toc) + "</nav>") if show_toc else ""
-    metas = "".join(f"<span>{esc(meta[k])}</span>" for k in ("date",) if meta.get(k))
-    status = f'<span class="badge">{esc(meta["status"])}</span>' if meta.get("status") else ""
-    page = f"""<!doctype html>
+    want_toc = meta.get("toc", "").lower()
+    show_toc = (want_toc == "true") or (want_toc != "false" and template in ("report", "plan", "comparison") and len(toc) >= 3)
+    toc_html = ('<nav class="toc">' + "".join('<a href="#%s">%s</a>' % (i, t) for i, t in toc) + "</nav>") if show_toc else ""
+    metas = "".join("<span>%s</span>" % esc(meta[k]) for k in ("date", "author") if meta.get(k))
+    status = '<span class="badge">%s</span>' % esc(meta["status"]) if meta.get("status") else ""
+    accent = meta.get("accent", "")
+    accent_css = ":root{--accent:%s}" % accent if re.match(r"^#[0-9a-fA-F]{3,8}$", accent) else ""
+    libs = ""
+    if state.get("mermaid"):
+        libs += ('<script src="%s/mermaid.min.js"></script><script>mermaid.initialize({startOnLoad:true,securityLevel:"strict",'
+                 'theme:matchMedia("(prefers-color-scheme: dark)").matches?"dark":"default"});</script>' % LIB)
+    if state.get("math"):
+        libs += ('<link rel="stylesheet" href="%s/katex/katex.min.css"><script src="%s/katex/katex.min.js"></script>'
+                 '<script>document.querySelectorAll(".math-display").forEach(e=>{try{katex.render(e.textContent,e,{displayMode:true,throwOnError:false})}catch(x){}})</script>' % (LIB, LIB))
+    width = auto_width(template, body_md, meta)
+    sub = '<p class="sub">%s</p>' % md.renderInline(meta["subtitle"]) if meta.get("subtitle") else ""
+    metabar = '<div class="meta">%s%s</div>' % (status, metas) if status or metas else ""
+    return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)}</title><meta name="generator" content="artifact-kit ({template})">
-<style>{CSS}</style></head>
-<body style="--w:{WIDTH[template]}px"><main>
-<header class="top"><div class="brand">tzekos · {template}</div><h1>{md.renderInline(title)}</h1>
-{f'<p class="sub">{md.renderInline(meta["subtitle"])}</p>' if meta.get("subtitle") else ""}
-{f'<div class="meta">{status}{metas}</div>' if status or metas else ""}</header>
-{toc_html}{body}
-<footer>Rendered by artifact-kit from {esc(src.name)}.</footer>
-</main><script>{JS}</script></body></html>
-"""
+<title>%s</title><meta name="generator" content="artifact-kit 2 (%s)">
+<style>%s%s</style></head>
+<body style="--w:%dpx"><main>
+<header class="top"><div class="brand">artifact \u00b7 %s</div><h1>%s</h1>
+%s
+%s</header>
+%s%s
+<footer>Rendered by artifact-kit from %s.</footer>
+</main><script>%s</script>%s</body></html>
+""" % (esc(re.sub(r"<[^>]+>", "", title)), template, CSS, accent_css, width, template, md.renderInline(title), sub, metabar,
+       toc_html, body, esc(Path(name).name), JS, libs)
+
+
+def render(src: Path) -> Path:
+    text = src.read_text(encoding="utf-8")
+    try:
+        page = render_text(text, src.name)
+    except Refused as e:
+        sys.exit("refused: %s" % e)
     out = src.with_suffix(".html")
     out.write_text(page, encoding="utf-8")
     os.chmod(out, 0o644)
     return out
 
 
+F = "\x60\x60\x60"
 EXAMPLES = {
     "report": """---
 title: Q3 margin analysis
@@ -331,15 +618,15 @@ date: 2026-09-27
 
 ## Summary
 
-```kpi
+FFFkpi
 Gross margin | 38.2% | -4.1 pts vs Q2
-Revenue | €412k | +9% QoQ
+Revenue | \u20ac412k | +9% QoQ
 Refund rate | 3.4% | +1.2 pts | bad
-```
+FFF
 
-```callout warn
+FFFcallout warn
 Two thirds of the drop is one supplier's price change.
-```
+FFF
 
 ## Drivers
 
@@ -348,12 +635,12 @@ Two thirds of the drop is one supplier's price change.
 | Supplier price | -2.7 pts | high |
 | Refunds | -1.0 pts | medium |
 
-```chart bar
+FFFchart bar
 Month,Margin %
 Jul,41.5
 Aug,39.0
 Sep,34.1
-```
+FFF
 
 ## Next steps
 
@@ -366,18 +653,23 @@ template: dashboard
 date: 2026-09-27
 ---
 
-```kpi
+FFFkpi
 Live listings | 3.1M | +2% d/d
 Harvested 24h | 412k |
 Delisted 24h | 180k | -12% d/d
-```
+FFF
 
-```chart line
+FFFchart line
 Day,Harvested,Delisted
 Mon,390000,210000
 Tue,401000,190000
 Wed,412000,180000
-```
+FFF
+
+FFFprogress
+Backfill | 72 | 100 | ETA 3h
+Disk (GB) | 410 | 500
+FFF
 """,
     "plan": """---
 title: Cut dsh token use
@@ -385,15 +677,20 @@ template: plan
 status: in progress
 ---
 
-```timeline
+FFFtimeline
 2026-09-27 | Cache TTL 1h | shipped
 2026-09-28 | Measure a week | compare cost per prompt
-```
+FFF
 
 ## Tasks
 
 - [x] Subagent tiering
 - [ ] Review after 7 days
+
+FFFactions
+Approve plan | The plan is approved - proceed.
+Ask for changes | Please revise the plan before proceeding.
+FFF
 """,
     "comparison": """---
 title: Subagent default model options
@@ -404,6 +701,14 @@ template: comparison
 |---|---|---|---|
 | Sonnet 5 | low | high | fine |
 | BytePlus flash | flat | medium | 28% 429s |
+
+FFFcolumns
+### Sonnet 5
+Best quality per token.
+||
+### BytePlus flash
+Flat price, more 429s.
+FFF
 """,
     "brief": """---
 title: One-page brief
@@ -412,11 +717,35 @@ template: brief
 
 Short context paragraph.
 
-```callout ok
+FFFcallout ok
 The decision, in one sentence.
-```
+FFF
+""",
+    "interactive": """---
+title: Pick a launch option
+template: brief
+---
+
+FFFactions
+Option A | I choose option A.
+Option B | I choose option B.
+Note for later | User leans towards A but wants numbers first. | context
+FFF
+
+FFFform Launch details
+Launch date | date
+Budget (EUR) | number
+Channels | check Email/Social/Ads
+Notes | textarea
+FFF
+
+FFFmermaid
+flowchart LR
+  A[Brief] --> B{Decision} --> C[Launch]
+FFF
 """,
 }
+EXAMPLES = {k: v.replace("FFF", F) for k, v in EXAMPLES.items()}
 
 
 def main(argv):
@@ -433,9 +762,9 @@ def main(argv):
             sys.exit("render needs an existing .md file")
         out = render(src)
         if out.parent == ARTIFACT_DIR:
-            print(f"{BASE_URL}/{out.name}")
+            print("%s/%s" % (BASE_URL, out.name))
         else:
-            print(f"wrote {out} (not in {ARTIFACT_DIR}, so it is not served; write the .md into ~/reports/)")
+            print("wrote %s (not in %s, so it is not served; write the .md into ~/reports/)" % (out, ARTIFACT_DIR))
         return
     sys.exit("usage: artifact-kit render <file.md> | example [template] | help")
 
