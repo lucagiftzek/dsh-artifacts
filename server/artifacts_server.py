@@ -496,15 +496,10 @@ def iw_secret():
     global _iw_secret
     if _iw_secret:
         return _iw_secret
-    s = os.environ.get("DSH_IDLE_WATCHDOG_SECRET")
+    s = (os.environ.get("DSH_IDLE_WATCHDOG_SECRET") or "").strip()
     if not s:
         try:
-            text = Path(HOME, ".dsh", "settings.yaml").read_text(encoding="utf-8")
-            i = text.find("\ndsh-idle-watchdog:")
-            if i != -1:
-                m = re.search(r"\n\s+secret:\s*['\"]?([^'\"\s]+)", text[i:i + 3000])
-                if m:
-                    s = m.group(1)
+            s = Path(os.path.expanduser("~/.dsh/idle-watchdog/api-secret")).read_text().strip()
         except OSError:
             pass
     _iw_secret = s
