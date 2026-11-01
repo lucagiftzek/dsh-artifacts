@@ -1,5 +1,6 @@
 """python3 test/test_templates.py: the template library (list, info, new, validation) and a smoke render of
-every bundled template with its own example data. Offline: no server, no browser, no network."""
+every bundled template with its own example data, all through the CLI (which runs the TypeScript engine in
+lib/engine). Offline: no server, no browser, no network. Engine unit tests: test/engine.mjs, parity: test/parity.mjs."""
 import json
 import os
 import re
@@ -13,8 +14,6 @@ ROOT = Path(__file__).resolve().parent.parent
 CLI = ROOT / "contrib" / "artifact"
 KIT = ROOT / "contrib" / "artifact-kit"
 BUNDLED = ROOT / "templates"
-sys.path.insert(0, str(ROOT / "contrib"))
-import templates as T  # noqa: E402
 
 
 class Env:
@@ -31,6 +30,16 @@ class Env:
 
     def run(self, *args):
         return subprocess.run([sys.executable, str(CLI), *args], capture_output=True, text=True, env=self.env, timeout=120)
+
+    def info(self, tid):
+        r = self.run("template-info", tid, "--json")
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout)
+
+    def ids(self):
+        r = self.run("templates", "--json")
+        assert r.returncode == 0, r.stderr
+        return [t for t in json.loads(r.stdout)["templates"]]
 
     def write(self, name, obj):
         p = Path(self.tmp.name) / name
@@ -79,7 +88,8 @@ class ListAndInfo(unittest.TestCase):
             d = json.loads(r.stdout)
             self.assertEqual(d["schema"]["type"], "object")
             mini = d["minimal_example"]
-            self.assertEqual(T.validate(d["schema"], json.loads(json.dumps(mini))), [], tid)
+            chk = self.e.run("new", "m-" + tid, "--template", tid, "--data", self.e.write("mini.json", mini), "--check")
+            self.assertEqual(chk.returncode, 0, tid + ": " + chk.stderr)
             for k in d["schema"].get("required", []):
                 self.assertIn(k, mini)
         r = self.e.run("template-info", "dashboard")
@@ -102,7 +112,7 @@ class Smoke(unittest.TestCase):
         self.e.close()
 
     def test_every_template_renders(self):
-        for t in T.all_templates():
+        for t in self.e.ids():
             with self.subTest(t["id"]):
                 stem = "smoke-" + t["id"]
                 r = self.e.run("new", stem, "--template", t["id"], "--json")
@@ -127,14 +137,14 @@ class Smoke(unittest.TestCase):
                     self.assertIn(marker, page)
                 elif t["kind"] == "react":
                     d = self.e.reports / stem
-                    self.assertIn("<title>%s</title>" % T.example_of(t)["title"], (d / "index.html").read_text())
+                    self.assertIn("<title>%s</title>" % self.e.info(t["id"])["example"]["title"], (d / "index.html").read_text())
                     data = json.loads((d / "data.json").read_text())
                     self.assertFalse(any(k.startswith("_") for k in data))
                 else:
                     comp = (self.e.reports / (stem + ".motion") / "index.html").read_text()
                     total = float(re.search(r'data-composition-id="main"[^>]*data-duration="([\d.]+)"', comp).group(1))
                     scenes = [(float(a), float(b)) for a, b in re.findall(r'<section[^>]*data-start="([\d.]+)" data-duration="([\d.]+)"', comp)]
-                    self.assertEqual(len(scenes), len(T.example_of(t)["scenes"]))
+                    self.assertEqual(len(scenes), len(self.e.info(t["id"])["example"]["scenes"]))
                     self.assertAlmostEqual(scenes[-1][0] + scenes[-1][1], total, places=2)
                     self.assertTrue((self.e.reports / (stem + ".html")).exists())
 
@@ -221,24 +231,6 @@ class Validation(unittest.TestCase):
         r = self.e.run("new", "x", "--template", "dashboard", "--data", self.e.write("w.json", {"title": "a \u2014 b", "kpis": [{"label": "a", "value": 1}]}))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("data.title: contains an em dash", r.stderr)
-
-
-class Mustache(unittest.TestCase):
-    def test_sections_filters_standalone(self):
-        tpl = "a\n{{#xs}}\n- {{.}}{{^@last}},{{/@last}}\n{{/xs}}\n{{^ys}}\nnone\n{{/ys}}\n{{row|csv}}|{{row|cells}}|{{row|sep}}\n{{{h}}} {{h}}\n"
-        out = T.fill(tpl, {"xs": [1, 2], "ys": [], "row": ["a,b", 2], "h": "<b>"}, escape=True)
-        self.assertEqual(out, 'a\n- 1,\n- 2\nnone\n&quot;a,b&quot;,2|a,b | 2|---|---\n<b> &lt;b&gt;\n')
-
-    def test_item_keys_do_not_fall_back(self):
-        schema = {"type": "object", "properties": {"date": {"type": "string"}, "src": {"type": "array", "items": {"type": "object", "properties": {"date": {"type": "string"}}}}}}
-        view = T.prepare(schema, {"date": "outer", "src": [{}]})
-        self.assertEqual(T.fill("{{#src}}[{{date}}]{{/src}}", view, escape=False), "[]")
-
-    def test_unbalanced(self):
-        with self.assertRaises(T.TemplateError):
-            T.fill("{{#a}}x{{/b}}", {}, escape=False)
-        with self.assertRaises(T.TemplateError):
-            T.fill("{{#a}}x", {}, escape=False)
 
 
 class Docs(unittest.TestCase):
