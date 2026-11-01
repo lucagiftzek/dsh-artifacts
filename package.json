@@ -1,7 +1,7 @@
 {
   "name": "dsh-artifacts",
-  "version": "2.0.0",
-  "description": "DSH web plugin: artifacts for the web GUI - sidebar tab with versions/diff/pick-and-ask, Markdown-to-page server, two-way chat bridge, local library shelf, media generation and an agent CLI.",
+  "version": "2.1.0",
+  "description": "DSH web plugin: artifacts for the web GUI: sidebar tab with versions/diff/pick-and-ask, Markdown-to-page server, two-way chat bridge, local library shelf, media generation, an agent CLI, and a template library with agent tools (artifact_templates, artifact_from_template, artifact_template_save).",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -17,13 +17,17 @@
     "templates",
     "cordis.patch.yml",
     "skills",
+    "docs",
+    "CHANGELOG.md",
     "README.md",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
-    "build": "node scripts/build.mjs",
-    "test": "node test/run.mjs"
+    "build": "node scripts/build.mjs && node scripts/build-node.mjs",
+    "test": "node test/run.mjs",
+    "build:node": "node scripts/build-node.mjs",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dsh": {
     "engines": {
@@ -43,7 +47,9 @@
     "react": "^18.2.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
   },
   "keywords": [
     "deepseek-harness",
@@ -51,7 +57,9 @@
     "dsh-plugin",
     "dsh-better-sidebar",
     "artifacts",
-    "sidebar"
+    "sidebar",
+    "templates",
+    "agent-tools"
   ],
   "author": {
     "name": "Loukas \"Luca\" Tzekos",

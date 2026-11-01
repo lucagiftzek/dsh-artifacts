@@ -22,9 +22,10 @@ the chat, version history, and image / speech / video generation.
 | Kit | contrib/artifact-kit | Markdown → themed HTML (kpi, charts, callouts, timeline, progress, columns, details, mermaid, math, actions, forms, media, figures, pull quotes, lead, footnotes; templates report, dashboard, plan, comparison, brief, article) |
 | CLI | contrib/artifact | the agent interface: new, list, show, versions, diff, restore, inbox, state, state-set, public, media, libs, motion, export |
 | Motion | contrib/motion.py + motion/ (npm: hyperframes) | animated explainers as code: `artifact new X --type motion` scaffolds X.html (player: scrubber, scene chips, timed change requests, export buttons, latest render) + X.motion/index.html (HyperFrames composition, one paused GSAP timeline); `artifact motion check/snapshot/voice/export`; renders locally or on a remote host over ssh+rsync (DSH_MOTION_REMOTE_HOSTS) |
-| Templates | contrib/templates.py + templates/ (scripts/sync-templates.sh) | reusable layouts: `artifact templates`, `artifact template-info <id>`, `artifact new <name> --template <id> --data x.json` (JSON Schema validation, assets copied, `--json` output); read from $ARTIFACT_TEMPLATES, ~/estate/templates/artifacts, then the bundled templates/ copy (report-text, article, dashboard, review-queue, video-explainer, video-page) |
+| Templates | src/engine/*.ts → lib/engine/ + templates/ (scripts/sync-templates.sh) | reusable layouts, see [Templates](#templates): agent tools `artifact_templates`, `artifact_template_info`, `artifact_from_template`, `artifact_template_save` and the same in the CLI (JSON Schema validation, assets copied, lossless JSON output) |
+| Agent tools + skill | lib/index.js → lib/tools.js (src/tools.ts) | registered by the node half at start with guarded dynamic imports; the packaged skill publish-artifact is registered with the host skill registry |
 | Library shelf | vendor/ (scripts/vendor.sh) | React, ReactDOM, Babel, Recharts, Tailwind, preact-htm, Chart.js, d3, three, mermaid, KaTeX, lucide, marked, PapaParse, Leaflet, GSAP (+ plugins under gsap/), HyperFrames player/runtime at /report/_lib/ |
-| Skill | skills/publish-artifact/SKILL.md | how agents should use all of the above |
+| Skill | skills/publish-artifact/SKILL.md | how agents should use all of the above (registered automatically; a copy in ~/.dsh/skills wins) |
 
 ## Why v2 (what was broken in v1)
 
@@ -58,6 +59,53 @@ the chat, version history, and image / speech / video generation.
 - Libraries are served locally, never inlined; the CLI + skill cost zero tokens
   per turn until used (no tool schemas in every request).
 
+## Templates
+
+A template is a finished, tested layout for one kind of deliverable. An agent writes only the data (JSON); it
+is validated against the template's JSON Schema, local images and videos are copied next to the artifact, and the
+page is written into the artifacts folder (`ARTIFACT_DIR`, default `~/reports`). Bundled: `report-text`, `article`,
+`dashboard`, `review-queue`, `video-explainer`, `video-page` (see [templates/README.md](templates/README.md)).
+
+### For users
+
+- Nothing to set up: after installing the plugin and restarting `dsh web`, every agent on the install sees the
+  four tools below and the `publish-artifact` skill, whose first step is "templates first".
+- Your own templates: agents save them with `artifact_template_save` into the user library
+  `${DSH_HOME:-~/.dsh}/artifacts/templates`. You can also drop template folders there by hand, or point
+  `ARTIFACT_TEMPLATES` (colon separated) at your own libraries.
+- Search order, first match per id wins: `$ARTIFACT_TEMPLATES`, `~/estate/templates/artifacts` (if it exists),
+  the user library, the bundled copy. A user template with a bundled id overrides the bundled one.
+- Settings (environment of `dsh web` and of the CLI): `ARTIFACT_DIR` (artifacts folder), `ARTIFACT_BASE_URL`
+  (URL prefix, default `/report`), `ARTIFACT_TEMPLATES` (extra libraries), `ARTIFACT_TEMPLATES_WRITE` (where agents
+  save templates; default: the first writable `ARTIFACT_TEMPLATES` entry, else the user library),
+  `DSH_ARTIFACTS_TOOLS=0` (do not register the tools and the skill). The bundled copy is never written.
+
+### For agents
+
+| Tool | What it does |
+|---|---|
+| `artifact_templates({ query? })` | every template: id, title, kind, purpose, when, not_for, required fields, source (bundled, user, estate, custom). Call it first. |
+| `artifact_template_info({ id })` | JSON Schema, full example, minimal example, field table, README summary |
+| `artifact_from_template({ name, template, data, base_dir?, force?, check?, title? })` | validates (one problem per field in `errors[]`, nothing written on bad data), fills, writes; returns `path` and `url`. Omit `data` to publish the example. |
+| `artifact_template_save({ id, title, kind, purpose, when, not_for?, schema, example, files, readme, entry?, render?, timing?, size?, overwrite? })` | creates or updates a template in the user library after checking the id, the schema, the example (validated and rendered once), the file paths, secrets and size limits; listed at once |
+
+Every result is lossless JSON; failures are `{ ok: false, code, message, hint, docs }` with a stable `ARTIFACT_*`
+code ([docs/ERRORS.md](docs/ERRORS.md)). The CLI does the same: `artifact templates`, `artifact template-info <id>`,
+`artifact new <name> --template <id> --data x.json [--check] [--force] [--json]`, `artifact template-save spec.json`.
+
+How it is built: the engine is TypeScript (`src/engine`, built 1:1 into `lib/engine` by `scripts/build-node.mjs`,
+committed, so installs need no build step and no Python). The CLI's template commands call `lib/engine/cli.js`.
+`test/parity.mjs` proves the output byte-identical to the original Python engine. The node half (`lib/index.js`)
+keeps zero static imports: it loads the skill helper, the tools and the host's `@deepseek-ai/dsh-tools` with
+guarded dynamic imports and registers through runtime `ctx.inject`, so a missing tools package costs one log line
+and never the plugin load.
+
+## When something goes wrong
+
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (symptom to fix) and [docs/ERRORS.md](docs/ERRORS.md) (every
+`ARTIFACT_*` code). The most common case: the tools are missing because `dsh web` was not restarted after
+installing or updating the plugin.
+
 ## Two-way protocol
 
 Artifact → chat: dsh.send(text) / data-dsh-send / form blocks deliver a user
@@ -85,12 +133,13 @@ state/<name>.json · inbox/<session>.jsonl · trash/ · media-state.json · inde
 ## Install / operate
 
 - Client: node scripts/build.mjs (ESBUILD_MAIN=<sibling esbuild>); hot-reloaded by the GUI.
+- Node half (template engine + agent tools): node scripts/build-node.mjs (src/*.ts → lib/, committed); type check with tsc -p tsconfig.json. Loads at the next dsh web start.
 - Server: your DSH reverse proxy imports server/artifacts_server.py (falls back to its legacy
   /report/ handlers if the import fails) and spawns the indexer.
   Changes to server/*.py need restart that proxy (seconds; dsh-web
   is untouched). artifact-kit and bridge.js are reloaded on change automatically.
 - Libraries: scripts/vendor.sh (vendor/ is git-ignored).
-- Tests: node test/run.mjs (client SSR smoke, server/indexer unit tests, kit tests).
+- Tests: node test/run.mjs (client SSR smoke, server/indexer unit tests, kit tests, template engine, agent tools on a mock host, parity with the Python reference engine).
 
 Security: same auth as the GUI (your login proxy, for example a forward-auth gate, plus the dsh cookie/token); closed extension
 allowlist; dotfiles and .artifacts/ never served; API writes require a custom

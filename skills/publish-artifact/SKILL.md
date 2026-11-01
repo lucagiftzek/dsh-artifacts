@@ -15,25 +15,38 @@ contents into the chat too. Never put secrets in an artifact.
 
 ## 0. Templates first (always the first step)
 
-Before writing any deliverable, run `artifact templates` and pick a fitting template. A template is a
-finished, tested layout: you write only a small JSON data file, the CLI validates it and publishes the page.
-That costs a few KB of output instead of a whole page, and every deliverable of a kind looks the same.
+Before writing any deliverable, list the templates and pick a fitting one. A template is a finished, tested
+layout: you write only a small JSON data object, it is validated and the page is published. That costs a few
+KB of output instead of a whole page, and every deliverable of a kind looks the same.
+
+With the agent tools (registered by the dsh-artifacts plugin, preferred):
+
+    artifact_templates({ query? })                         # id, title, kind, purpose, when, not_for, required fields, source
+    artifact_template_info({ id })                         # schema, example, minimal example, field table, README summary
+    artifact_from_template({ name, template, data })       # validate, fill, write; returns path and url (check: true validates only)
+    artifact_template_save({ id, title, kind, purpose, when, schema, example, files, readme })   # save a new layout
+
+The same with the CLI (works everywhere the plugin is installed):
 
     artifact templates                          # id, purpose, data fields, preview link of each template
     artifact template-info <id>                 # field list + minimal example (add --json for the schema)
     artifact new <name> --template <id> --data /tmp/<name>.json [--check] [--force] [--json]
+    artifact template-save <spec.json>          # same fields as artifact_template_save
 
 Bundled set: report-text (memo, long prose), article (photos, charts, quotes, sources), dashboard
 (KPI tiles, charts, table), review-queue (approve/edit/reject a list), video-explainer (animated
 explainer to MP4), video-page (player page with chapters for an existing MP4). Templates are read from
-$ARTIFACT_TEMPLATES, ~/estate/templates/artifacts, then the plugin's templates/ folder.
+$ARTIFACT_TEMPLATES, ~/estate/templates/artifacts, the user library ~/.dsh/artifacts/templates, then the
+plugin's templates/ folder (first match per id wins).
 
-- Image and video fields take local paths; they are copied next to the artifact. Bad data exits 2 with
-  one line per problem: fix and rerun.
+- Image and video fields take local paths; they are copied next to the artifact. Bad data is refused with one
+  problem per field (tool: `errors[{field, problem}]`, CLI: exit 2): fix and call again. Nothing is written.
 - Small later changes: edit the generated `~/reports/<name>.md` (or `<name>/data.json` for react templates).
-  Changed numbers: update the JSON and rerun with `--force`.
-- Generate from scratch (sections below) only when nothing fits; if the layout will come back, save it as a
-  template (templates/README.md explains the folder format).
+  Changed numbers: update the data and call again with `force: true` (CLI `--force`).
+- Generate from scratch (sections below) only when nothing fits. If the layout will come back, save it as a
+  template with `artifact_template_save`: move the variable parts into a schema plus an example, the rest into
+  template.md (markdown), index.html + app.jsx (react) or composition.html (motion). It is validated (schema,
+  example, trial render, no secrets, size limits), written to the user library and listed at once.
 
 ## 1 - Pick the cheapest form that does the job
 

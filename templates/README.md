@@ -4,8 +4,9 @@ This folder ships with dsh-artifacts, so every install has the templates. The ex
 were generated for these examples and may be reused freely.
 
 Reusable artifact layouts, so a known kind of deliverable is not written again from scratch: an agent picks a
-template, writes only the data (JSON), and the `artifact` CLI validates it, fills the template and publishes it
-under `~/reports/`. Cheaper (a few KB of data instead of a whole page of output tokens), faster, and every
+template, writes only the data (JSON), and the engine validates it, fills the template and publishes it under
+`~/reports/`. Agents use the tools `artifact_templates`, `artifact_template_info`, `artifact_from_template` and
+`artifact_template_save`; the `artifact` CLI below does the same from a shell. Cheaper (a few KB of data instead of a whole page of output tokens), faster, and every
 deliverable of the same kind looks the same.
 
     artifact templates                              # list: purpose, data fields, preview link
@@ -44,18 +45,49 @@ a `type` get an `is_<type>` flag. Schema fields marked `"x-asset": true` are loc
 the artifact (`<name>-files/` or `assets/`) and rewrites the link. Motion templates declare `timing`: scene lengths
 come from the data (or from the amount of text) and starts and the total are computed.
 
-## Adding or improving a template
+## Creating a template
 
-1. Build the deliverable once by hand. When it is a layout that will come back, move the variable parts into a
-   data file and the rest into a folder here, with a `template.json` (schema with descriptions, an example that
-   says "Example data" where figures are illustrative) and a `README.md`.
-2. `artifact template-info <id>` and `artifact new t1 --template <id>` must work with the example; then
-   `artifact template-preview <id>` and check the preview in a browser, light and dark, phone width.
-3. Keep your own library in a folder of your choice and point `$ARTIFACT_TEMPLATES` at it, or contribute the
-   template to this repository (`templates/<id>/`). If you keep a canonical library elsewhere, refresh this bundled
-   copy with `scripts/sync-templates.sh <your library>`. Run the plugin tests: `node test/run.mjs`.
+Agents create templates with the `artifact_template_save` tool (or `artifact template-save spec.json`, same
+fields). It writes into the user library `${DSH_HOME:-~/.dsh}/artifacts/templates` (or `$ARTIFACT_TEMPLATES_WRITE`,
+or the first writable `$ARTIFACT_TEMPLATES` entry), never into this bundled copy, and the template is listed by
+`artifact_templates` at once.
 
-Search order: `$ARTIFACT_TEMPLATES` (colon separated), then `~/estate/templates/artifacts` if it exists, then this bundled copy.
+1. Build the deliverable once. When it is a layout that will come back, move the variable parts into a schema
+   and an example (say "Example data" where figures are illustrative), the rest into the template files.
+2. Save it:
+
+       artifact_template_save({
+         id: "weekly-status", title: "Weekly status", kind: "markdown",
+         purpose: "One page weekly status with highlights and risks.",
+         when: "A recurring status update for a team or a project.",
+         not_for: "Long reports (use report-text).",
+         schema: { type: "object", required: ["title", "highlights"], properties: {
+           title: { type: "string", minLength: 1 },
+           highlights: { type: "array", minItems: 1, items: { type: "string" } } } },
+         example: { title: "Example data: team status", highlights: ["Shipped the importer"] },
+         files: { "template.md": "# {{title|oneline}}\n\n{{#highlights}}\n- {{.}}\n{{/highlights}}\n" },
+         readme: "# weekly-status\n\nWhat it is for, how to use it, the fields.\n\n## Changes\n\n- created\n"
+       })
+
+   Kind markdown needs `template.md` (or `entry`), react the files in `render` (default `index.html`; other files
+   such as `app.jsx` are copied as they are and the data lands in `data.json`), motion `composition.html`.
+   Binary example assets: `"example/logo.png": "base64:<data>"`, referenced from the example as `example/logo.png`
+   in a field marked `"x-asset": true`.
+3. The save is refused, with every problem listed and nothing written, when: the id is not a lower-case slug;
+   the schema root is not `{"type": "object", "properties": {...}}` or has malformed keywords (unsupported
+   keywords only warn); the example does not fit the schema or names a missing asset; a path is absolute, hidden,
+   uses `..` or is deeper than 4 levels; the entry file is missing; the example does not render; a
+   credential-shaped string appears anywhere; a file is over 512 KB, the template over 4 MB or 60 files; the id
+   is taken by a library searched before the target (estate or `$ARTIFACT_TEMPLATES`). Updating an existing id
+   needs `overwrite: true`; files you do not pass are kept, `null` deletes one.
+4. Publish the example (`artifact_from_template({ name: "t1", template: "<id>" })` or `artifact template-preview
+   <id>`) and check it in a browser, light and dark, phone width.
+
+To contribute a template to this repository, copy its folder to `templates/<id>/` and run `node test/run.mjs`. If
+you keep a canonical library elsewhere, refresh this bundled copy with `scripts/sync-templates.sh <your library>`.
+
+Search order (first match per id wins): `$ARTIFACT_TEMPLATES` (colon separated), `~/estate/templates/artifacts`
+if it exists, the user library `${DSH_HOME:-~/.dsh}/artifacts/templates`, then this bundled copy.
 
 Conventions: local libraries only (`/report/_lib/`), never a CDN; no secrets in data files (the CLI refuses
 credential-shaped strings); English only; no em dash, en dash or spaced hyphen in any text (the CLI warns).
