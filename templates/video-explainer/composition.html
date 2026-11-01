@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width={{_w}}, height={{_h}}" />
+<title>{{title}}</title>
+<script src="vendor/gsap.min.js"></script>
+<!-- Template video-explainer (~/estate/templates/artifacts/video-explainer). Scene text and timing come
+     from data.json via `artifact new <name> --template video-explainer --data ... --force`; small edits here are fine. -->
+<style>
+  :root { --bg:#0f1115; --ink:#f4efe8; --muted:#b3ada4; --line:#2a2d33; --accent:{{accent}}; --accent2:{{accent2}}; --u:{{_u}}px; }
+  .theme-light { --bg:#f7f5f2; --ink:#1c1a18; --muted:#5f5851; --line:#e3ddd6; }
+  html, body { margin:0; background:var(--bg); color:var(--ink); font-family: ui-sans-serif, system-ui, sans-serif; }
+  #root { position:relative; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--ink); }
+  .clip { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; padding:0 9%; box-sizing:border-box; }
+  .kicker { font-size:calc(var(--u)*0.030); letter-spacing:.18em; text-transform:uppercase; color:var(--accent); margin:0 0 .7em; font-weight:650; }
+  .title { font-size:calc(var(--u)*0.080); line-height:1.06; font-weight:750; margin:0; max-width:15em; }
+  .title .w { display:inline-block; }
+  .h2 { font-size:calc(var(--u)*0.058); line-height:1.1; font-weight:720; margin:0 0 .8em; max-width:18em; }
+  .text { font-size:calc(var(--u)*0.036); color:var(--muted); margin:.9em 0 0; max-width:26em; line-height:1.35; }
+  .rule { height:calc(var(--u)*0.006); width:34%; background:var(--accent); margin-top:.9em; transform-origin:left center; }
+  ul.points { list-style:none; margin:0; padding:0; display:grid; gap:calc(var(--u)*0.028); }
+  ul.points li { font-size:calc(var(--u)*0.042); line-height:1.25; display:flex; gap:.6em; align-items:baseline; max-width:22em; }
+  ul.points li::before { content:""; flex:0 0 auto; width:.42em; height:.42em; background:var(--accent); border-radius:2px; transform:translateY(-.08em); }
+  .stat { display:flex; align-items:baseline; gap:.15em; font-weight:800; }
+  .stat .n, .stat .pre { font-size:calc(var(--u)*0.17); font-variant-numeric:tabular-nums; line-height:1; }
+  .stat .unit { font-size:calc(var(--u)*0.065); color:var(--accent); }
+  .bars { display:flex; align-items:stretch; gap:calc(var(--u)*0.03); height:calc(var(--u)*0.40); margin-top:.4em; max-width:100%; }
+  .bar { flex:1 1 0; min-width:0; display:grid; grid-template-rows:1fr auto; }
+  .track { position:relative; }
+  .fill { position:absolute; left:0; right:0; bottom:0; background:var(--accent2); border-radius:6px 6px 0 0; transform-origin:bottom center; }
+  .bar.hl .fill { background:var(--accent); }
+  .val { position:absolute; left:0; right:0; text-align:center; font-size:calc(var(--u)*0.032); font-weight:700; font-variant-numeric:tabular-nums; }
+  .lbl { text-align:center; font-size:calc(var(--u)*0.026); color:var(--muted); padding-top:.5em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; border-top:2px solid var(--line); }
+  blockquote.q { margin:0; font-size:calc(var(--u)*0.060); line-height:1.2; font-weight:650; max-width:17em; border-left:calc(var(--u)*0.008) solid var(--accent); padding-left:.6em; }
+  .by { font-size:calc(var(--u)*0.032); color:var(--muted); margin:1em 0 0; }
+  .dot { width:calc(var(--u)*0.03); height:calc(var(--u)*0.03); border-radius:50%; background:var(--accent); margin-bottom:.9em; }
+  .outro .title { font-size:calc(var(--u)*0.068); }
+  .brand { position:absolute; left:9%; bottom:6%; font-size:calc(var(--u)*0.022); color:var(--muted); letter-spacing:.12em; text-transform:uppercase; }
+</style>
+</head>
+<body>
+<div id="root" class="theme-{{theme}}" data-composition-id="main" data-start="0" data-width="{{_w}}" data-height="{{_h}}" data-duration="{{_duration}}">
+{{#scenes}}
+
+  <section id="{{sid}}-{{type}}" class="clip{{#is_outro}} outro{{/is_outro}}" data-label="{{label}}{{^label}}{{#title}}{{title}}{{/title}}{{^title}}{{type}}{{/title}}{{/label}}" data-start="{{start}}" data-duration="{{seconds}}">
+    {{#kicker}}<p class="kicker" data-in="fade" id="{{sid}}-kicker">{{kicker}}</p>{{/kicker}}
+{{#is_title}}
+    <h1 class="title split" data-in="words" id="{{sid}}-title">{{title}}</h1>
+    <div class="rule" data-in="rule" id="{{sid}}-rule"></div>
+    {{#text}}<p class="text" data-in="fade" id="{{sid}}-text">{{text}}</p>{{/text}}
+{{/is_title}}
+{{#is_bullets}}
+    {{#title}}<h2 class="h2" data-in="fade" id="{{sid}}-title">{{title}}</h2>{{/title}}
+    <ul class="points" id="{{sid}}-points">
+{{#bullets}}
+      <li data-in="item" id="{{sid}}-b{{@n}}">{{.}}</li>
+{{/bullets}}
+    </ul>
+{{/is_bullets}}
+{{#is_stat}}
+    {{#title}}<h2 class="h2" data-in="fade" id="{{sid}}-title">{{title}}</h2>{{/title}}
+    <div class="stat" data-in="count" data-to="{{value}}" data-dec="{{decimals}}" id="{{sid}}-stat"><span class="pre">{{prefix}}</span><span class="n">0</span><span class="unit">{{unit}}</span></div>
+    {{#caption}}<p class="text" data-in="fade" id="{{sid}}-cap">{{caption}}</p>{{/caption}}
+{{/is_stat}}
+{{#is_chart}}
+    {{#title}}<h2 class="h2" data-in="fade" id="{{sid}}-title">{{title}}</h2>{{/title}}
+    <div class="bars" data-in="bars" data-hl="{{highlight}}" data-unit="{{unit}}" id="{{sid}}-bars">
+{{#bars}}
+      <div class="bar" data-v="{{value}}" data-label="{{label}}"><div class="track"><div class="fill"></div><div class="val">{{value}}</div></div><div class="lbl">{{label}}</div></div>
+{{/bars}}
+    </div>
+    {{#caption}}<p class="text" data-in="fade" id="{{sid}}-cap">{{caption}}</p>{{/caption}}
+{{/is_chart}}
+{{#is_quote}}
+    <blockquote class="q" data-in="fade" id="{{sid}}-q">{{text}}</blockquote>
+    {{#by}}<p class="by" data-in="fade" id="{{sid}}-by">{{by}}</p>{{/by}}
+{{/is_quote}}
+{{#is_outro}}
+    <div class="dot" data-in="pop" id="{{sid}}-dot"></div>
+    <h2 class="title" data-in="fade" id="{{sid}}-title">{{title}}</h2>
+    {{#text}}<p class="text" data-in="fade" id="{{sid}}-text">{{text}}</p>{{/text}}
+{{/is_outro}}
+  </section>
+{{/scenes}}
+{{#brand}}
+  <div class="brand" id="brand">{{brand}}</div>
+{{/brand}}
+</div>
+<script>
+  // ONE paused timeline. Generic: every [data-in] element of a scene enters in document order, so the
+  // HTML above (filled from data.json) is the only thing that changes between videos. Deterministic only.
+  const tl = gsap.timeline({ paused: true });
+  const fmt = (v, dec) => v.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+  document.querySelectorAll(".split").forEach((el) => {
+    const words = el.textContent.trim().split(/\s+/);
+    el.textContent = "";
+    words.forEach((w, i) => {
+      const s = document.createElement("span");
+      s.className = "w"; s.textContent = w; el.appendChild(s);
+      if (i < words.length - 1) el.appendChild(document.createTextNode(" "));
+    });
+  });
+  document.querySelectorAll(".bars").forEach((b) => {
+    const bars = [...b.querySelectorAll(".bar")];
+    const max = Math.max(1e-9, ...bars.map((x) => Math.abs(+x.dataset.v || 0)));
+    const unit = b.dataset.unit || "";
+    bars.forEach((x) => {
+      const pct = (100 * Math.max(0, +x.dataset.v || 0)) / max * 0.86;
+      x.querySelector(".fill").style.height = pct + "%";
+      const val = x.querySelector(".val");
+      val.style.bottom = "calc(" + pct + "% + 0.3em)";
+      val.textContent = fmt(+x.dataset.v || 0, 0) + unit;
+      if (b.dataset.hl && x.dataset.label === b.dataset.hl) x.classList.add("hl");
+    });
+  });
+
+  const scenes = [...document.querySelectorAll("#root > section.clip")];
+  scenes.forEach((sc, idx) => {
+    const S = +sc.dataset.start, D = +sc.dataset.duration, last = idx === scenes.length - 1;
+    const items = sc.querySelectorAll('[data-in="item"]');
+    const step = items.length ? Math.max(0.3, Math.min(0.7, (D - 2.2) / items.length)) : 0;
+    let t = S + 0.15;
+    sc.querySelectorAll("[data-in]").forEach((el) => {
+      const k = el.dataset.in;
+      if (k === "words") {
+        const w = el.querySelectorAll(".w");
+        tl.fromTo(w, { yPercent: 60, opacity: 0 }, { yPercent: 0, opacity: 1, duration: 0.7, ease: "power4.out", stagger: 0.08 }, t);
+        t += 0.3 + 0.08 * w.length;
+      } else if (k === "rule") {
+        tl.fromTo(el, { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "expo.out" }, t);
+        t += 0.25;
+      } else if (k === "item") {
+        tl.fromTo(el, { x: -30, opacity: 0 }, { x: 0, opacity: 1, duration: 0.55, ease: "power3.out" }, t);
+        t += step;
+      } else if (k === "bars") {
+        tl.fromTo(el.querySelectorAll(".fill"), { scaleY: 0 }, { scaleY: 1, duration: 0.7, ease: "power3.out", stagger: 0.1 }, t);
+        tl.fromTo(el.querySelectorAll(".val, .lbl"), { opacity: 0 }, { opacity: 1, duration: 0.4, ease: "power1.out", stagger: 0.05 }, t + 0.3);
+        t += 0.6;
+      } else if (k === "count") {
+        const o = { v: 0 }, to = +el.dataset.to || 0, dec = +el.dataset.dec || 0, n = el.querySelector(".n");
+        tl.fromTo(el, { y: 30, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5, ease: "power3.out" }, t);
+        tl.to(o, { v: to, duration: Math.min(1.4, D * 0.4), ease: "power2.out", onUpdate: () => { n.textContent = fmt(o.v, dec); } }, t + 0.05);
+        t += 0.5;
+      } else if (k === "pop") {
+        tl.fromTo(el, { scale: 0 }, { scale: 1, duration: 0.5, ease: "back.out(1.7)" }, t);
+        t += 0.15;
+      } else {
+        tl.fromTo(el, { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, t);
+        t += 0.18;
+      }
+    });
+    if (!last) tl.to(sc.querySelectorAll("[data-in]"), { opacity: 0, duration: 0.35, ease: "power2.in" }, S + D - 0.4);
+  });
+  tl.set({}, {}, {{_duration}}); // the timeline spans the whole root duration (the player reads its length)
+  // Guarded: inside the DSH player iframe the registry may not exist yet when this runs.
+  (window.__timelines = window.__timelines || {})["main"] = tl;
+</script>
+<script>
+  /* DSH: opened directly in the Artifacts sidebar -> show the player page instead.
+     Inert during renders (navigator.webdriver) and inside the player (?player=1). */
+  if (window.__DSH_ARTIFACT__ && !navigator.webdriver && !/[?&]player=1/.test(location.search))
+    location.replace("../{{_name}}.html");
+</script>
+</body>
+</html>

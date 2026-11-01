@@ -1,0 +1,69 @@
+{
+  "title": "Example review queue",
+  "intro": "One card per item. Approve, edit the text, or reject. Answers are stored here and sent to the agent inbox.",
+  "answerType": "review-answer",
+  "editable": true,
+  "noDashes": true,
+  "approveLabel": "Approve",
+  "rejectLabel": "Reject",
+  "footer": "(read-only text shown under every body, for example a legal footer)",
+  "items": [
+    {
+      "id": "acme",
+      "title": "Acme Jobs",
+      "subtitle": "to hello@acme.example",
+      "link": "https://acme.example",
+      "badges": [
+        {
+          "text": "mail: deliverable",
+          "tone": "green"
+        },
+        {
+          "text": "Hi there",
+          "tone": "gray"
+        }
+      ],
+      "subject": "A question about Acme's job data",
+      "body": "Hi there,\n\nThis is the exact text that would be sent.\n\nLoukas",
+      "fields": [
+        {
+          "label": "Sample page",
+          "value": "https://example.org/s/abc",
+          "href": "https://example.org/s/abc",
+          "note": "25 live jobs"
+        },
+        {
+          "label": "Time zone",
+          "value": "Europe/London",
+          "note": "guess"
+        }
+      ],
+      "evidence": {
+        "label": "Evidence the line is built on",
+        "text": "Acme lists 1,200 remote roles across Europe.",
+        "highlight": "1,200 remote roles",
+        "url": "https://acme.example"
+      },
+      "note": "Optional note for the reviewer."
+    },
+    {
+      "id": "beta",
+      "title": "Beta Careers",
+      "subtitle": "to team@beta.example",
+      "badges": [
+        {
+          "text": "mail: catch-all",
+          "tone": "amber"
+        }
+      ],
+      "body": "A card can also be just text, with no subject."
+    }
+  ],
+  "excluded": [
+    {
+      "id": "gamma",
+      "name": "Gamma",
+      "why": "address rejected by the mail server"
+    }
+  ]
+}

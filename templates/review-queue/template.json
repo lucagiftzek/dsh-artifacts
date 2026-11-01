@@ -1,0 +1,88 @@
+{
+  "id": "review-queue",
+  "title": "Review queue (approve, edit, reject)",
+  "kind": "react",
+  "purpose": "Go through a list and approve, edit or reject each item; hotkeys 1 approve, 3 reject, J and K move.",
+  "when": "Outreach emails to approve, prospects to validate, drafts to accept: anything with a yes or no per item.",
+  "not_for": "Read-only lists (use dashboard or report-text) and free-form forms (use a Markdown form block).",
+  "render": ["index.html"],
+  "example": "data.example.json",
+  "schema": {
+    "type": "object",
+    "required": ["title", "items"],
+    "properties": {
+      "title": {"type": "string", "minLength": 1},
+      "intro": {"type": "string", "description": "One paragraph under the title"},
+      "answerType": {"type": "string", "default": "review-answer", "description": "Type sent with every decision to artifact inbox"},
+      "editable": {"type": "boolean", "default": true, "description": "Allow editing subject and body"},
+      "noDashes": {"type": "boolean", "default": true, "description": "Refuse edits containing em dash, en dash or spaced hyphen"},
+      "approveLabel": {"type": "string", "default": "Approve"},
+      "rejectLabel": {"type": "string", "default": "Reject"},
+      "footer": {"type": "string", "description": "Read-only text shown under every body"},
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "required": ["id", "title"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1, "description": "Stable id; answers are keyed by it"},
+            "title": {"type": "string"},
+            "subtitle": {"type": "string"},
+            "link": {"type": "string"},
+            "badges": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {
+                  "text": {"type": "string"},
+                  "tone": {"enum": ["green", "amber", "red", "gray", "blue"]},
+                  "title": {"type": "string"}
+                }
+              }
+            },
+            "subject": {"type": "string", "description": "Omit for no subject"},
+            "body": {"type": "string", "description": "The exact text under review"},
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["label"],
+                "properties": {
+                  "label": {"type": "string"},
+                  "value": {"type": ["string", "number"]},
+                  "href": {"type": "string"},
+                  "note": {"type": "string"}
+                }
+              }
+            },
+            "evidence": {
+              "type": "object",
+              "properties": {
+                "label": {"type": "string"},
+                "text": {"type": "string"},
+                "highlight": {"type": "string"},
+                "url": {"type": "string"}
+              }
+            },
+            "note": {"type": "string"}
+          }
+        }
+      },
+      "excluded": {
+        "type": "array",
+        "description": "Items left out, with the reason",
+        "items": {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": {"type": "string"},
+            "name": {"type": "string"},
+            "why": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

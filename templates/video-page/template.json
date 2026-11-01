@@ -1,0 +1,83 @@
+{
+  "id": "video-page",
+  "title": "Video player page with chapters",
+  "kind": "react",
+  "purpose": "Player page for an existing MP4: chapters list and marker bar, optional captions and transcript, download link.",
+  "when": "You already have a video (a motion export, a recording, a generated clip) and need a page to share and navigate it.",
+  "not_for": "Making the video itself (use video-explainer, then point this template at its MP4).",
+  "render": ["index.html"],
+  "schema": {
+    "type": "object",
+    "required": ["title", "src"],
+    "additionalProperties": false,
+    "properties": {
+      "title": {"type": "string", "minLength": 1},
+      "subtitle": {"type": "string"},
+      "date": {"type": "string"},
+      "author": {"type": "string"},
+      "src": {"type": "string", "x-asset": true, "pattern": "(?i)(\\.(mp4|webm|mov|m4v)$|^/|^https?://)", "description": "MP4 or WebM file (copied to assets/) or a URL such as /report/x.motion/renders/x.mp4"},
+      "poster": {"type": "string", "x-asset": true, "description": "Still image shown before playback"},
+      "captions": {"type": "string", "x-asset": true, "description": "WebVTT captions file"},
+      "captions_lang": {"type": "string", "default": "en"},
+      "captions_label": {"type": "string", "default": "English"},
+      "duration": {"type": ["number", "string"], "description": "Only needed when the browser cannot read it (seconds or m:ss)"},
+      "description": {"type": "string", "description": "Plain text; blank lines separate paragraphs"},
+      "chapters": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["at", "title"],
+          "additionalProperties": false,
+          "properties": {
+            "at": {"type": ["number", "string"], "pattern": "^\\d+(:\\d{1,2}){0,2}(\\.\\d+)?$", "description": "Start: seconds, m:ss or h:mm:ss"},
+            "title": {"type": "string"},
+            "note": {"type": "string"}
+          }
+        }
+      },
+      "transcript": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["at", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "at": {"type": ["number", "string"], "pattern": "^\\d+(:\\d{1,2}){0,2}(\\.\\d+)?$"},
+            "text": {"type": "string"}
+          }
+        }
+      },
+      "links": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["label", "url"],
+          "additionalProperties": false,
+          "properties": {"label": {"type": "string"}, "url": {"type": "string"}}
+        }
+      },
+      "download": {"type": "boolean", "default": true, "description": "Show the Download video button"}
+    }
+  },
+  "example": {
+    "title": "Template library in ten seconds",
+    "subtitle": "Example video: the video-explainer template preview, played with chapters",
+    "date": "2026-11-01",
+    "src": "example/sample.mp4",
+    "poster": "example/poster.jpg",
+    "description": "This page is the video-page template filled with example data. The clip itself is the video-explainer template rendered to MP4.\n\nClick a chapter, the marker bar or a transcript line to jump.",
+    "chapters": [
+      {"at": 0, "title": "Title card", "note": "What the video is about"},
+      {"at": 2.2, "title": "Three steps", "note": "Bullets appear one at a time"},
+      {"at": "0:05.2", "title": "Chart", "note": "Bars grow from the data"},
+      {"at": "0:08", "title": "Outro", "note": "Where to start"}
+    ],
+    "transcript": [
+      {"at": 0, "text": "Templates first."},
+      {"at": 2.2, "text": "Pick a template, write the data, publish."},
+      {"at": 5.2, "text": "Output per artifact: from scratch, Markdown, template data."},
+      {"at": 8, "text": "artifact templates"}
+    ],
+    "links": [{"label": "All templates", "url": "/report/artifact-templates.html"}]
+  }
+}

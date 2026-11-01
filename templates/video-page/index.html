@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{title}}</title>
+<style>
+:root{--bg:#f7f5f2;--panel:#fff;--ink:#1c1a18;--muted:#6b645d;--line:#e3ddd6;--accent:#c1553a;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#141210;--panel:#1c1917;--ink:#ece6df;--muted:#a39a90;--line:#2f2a26;--accent:#d8694c}}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+<script src="/report/_lib/tailwind.js"></script>
+<script src="/report/_lib/react.js"></script>
+<script src="/report/_lib/react-dom.js"></script>
+<script src="/report/_lib/babel.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<!-- Template video-page (~/estate/templates/artifacts/video-page). Edit data.json, not app.jsx. -->
+<script type="text/babel" data-presets="react" src="app.jsx"></script>
+</body></html>

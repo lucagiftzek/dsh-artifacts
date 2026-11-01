@@ -1,0 +1,116 @@
+{
+  "id": "dashboard",
+  "title": "KPI dashboard",
+  "kind": "markdown",
+  "purpose": "KPI tiles, a grid of charts, progress bars and a sortable table, all from one data file.",
+  "when": "Status of a pipeline, product, campaign or budget: numbers first, little prose. Refresh by rerunning with --force.",
+  "not_for": "Live data that changes every minute (write a react app with dsh.storage) or long prose (report-text).",
+  "entry": "template.md",
+  "schema": {
+    "type": "object",
+    "required": ["title", "kpis"],
+    "additionalProperties": false,
+    "properties": {
+      "title": {"type": "string", "minLength": 1},
+      "subtitle": {"type": "string"},
+      "date": {"type": "string", "description": "As of, shown in the header"},
+      "status": {"type": "string", "description": "Badge, for example live or weekly"},
+      "kpis": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Tiles in order",
+        "items": {
+          "type": "object",
+          "required": ["label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "label": {"type": "string", "pattern": "^[^|\\n]*$"},
+            "value": {"type": ["string", "number"], "pattern": "^[^|\\n]*$"},
+            "note": {"type": "string", "pattern": "^[^|\\n]*$", "description": "Change or context; a leading plus or minus sign colours it"},
+            "verdict": {"enum": ["good", "bad"], "description": "Overrides the colour of the note"}
+          }
+        }
+      },
+      "alert": {
+        "type": "object",
+        "required": ["text"],
+        "additionalProperties": false,
+        "description": "Optional callout under the tiles",
+        "properties": {
+          "tone": {"enum": ["info", "ok", "warn", "risk"], "default": "warn"},
+          "text": {"type": "string"}
+        }
+      },
+      "charts": {
+        "type": "array",
+        "description": "Shown two per row (one per row on phones)",
+        "items": {
+          "type": "object",
+          "required": ["kind", "columns", "rows"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"enum": ["bar", "hbar", "line", "pie", "donut"]},
+            "title": {"type": "string"},
+            "columns": {"type": "array", "minItems": 2, "items": {"type": "string"}, "description": "Label column, then one name per series"},
+            "rows": {"type": "array", "minItems": 1, "items": {"type": "array", "minItems": 2, "items": {"type": ["string", "number"]}}}
+          }
+        }
+      },
+      "progress": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "label": {"type": "string", "pattern": "^[^|\\n]*$"},
+            "value": {"type": "number"},
+            "max": {"type": "number", "default": 100},
+            "note": {"type": "string", "pattern": "^[^|\\n]*$"}
+          }
+        }
+      },
+      "table": {
+        "type": "object",
+        "required": ["columns", "rows"],
+        "additionalProperties": false,
+        "description": "Sortable table (click a header)",
+        "properties": {
+          "title": {"type": "string"},
+          "columns": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "rows": {"type": "array", "items": {"type": "array", "items": {"type": ["string", "number", "null"]}}}
+        }
+      },
+      "notes": {"type": "string", "description": "Markdown at the end: method, sources, caveats"}
+    }
+  },
+  "example": {
+    "title": "Pipeline health",
+    "subtitle": "Example data: a crawler fleet, one week",
+    "date": "2026-11-01",
+    "status": "weekly",
+    "kpis": [
+      {"label": "Live listings", "value": "3.1M", "note": "+2% w/w"},
+      {"label": "Harvested 24h", "value": "412k", "note": "+4% w/w"},
+      {"label": "Delisted 24h", "value": "180k", "note": "-12% w/w", "verdict": "good"},
+      {"label": "Failed fetches", "value": "1.8%", "note": "+0.4 pts", "verdict": "bad"}
+    ],
+    "alert": {"tone": "warn", "text": "Two sources returned empty pages since Thursday; they are paused until the parser is fixed."},
+    "charts": [
+      {"kind": "line", "title": "Harvested and delisted per day", "columns": ["Day", "Harvested", "Delisted"], "rows": [["Mon", 390000, 210000], ["Tue", 401000, 190000], ["Wed", 412000, 180000], ["Thu", 398000, 186000], ["Fri", 420000, 175000]]},
+      {"kind": "bar", "title": "Listings by region, thousands", "columns": ["Region", "Listings"], "rows": [["EU", 1420], ["UK", 610], ["US", 780], ["APAC", 290]]},
+      {"kind": "donut", "title": "Source mix", "columns": ["Source", "Share"], "rows": [["ATS feeds", 54], ["Career pages", 31], ["Boards", 15]]},
+      {"kind": "hbar", "title": "Median fetch time, ms", "columns": ["Source", "ms"], "rows": [["ATS feeds", 220], ["Career pages", 640], ["Boards", 410]]}
+    ],
+    "progress": [
+      {"label": "Backfill", "value": 72, "note": "ETA 3 h"},
+      {"label": "Disk, GB", "value": 410, "max": 500}
+    ],
+    "table": {
+      "title": "Sources needing attention",
+      "columns": ["Source", "Region", "Live", "Errors 24h", "Status"],
+      "rows": [["example-ats-1", "EU", 18200, 0, "ok"], ["example-board-2", "UK", 7400, 312, "paused"], ["example-careers-3", "US", 2100, 41, "watch"]]
+    },
+    "notes": "All numbers on this page are **example data**. Method: counts from the nightly snapshot, fetch times as the median over 24 h."
+  }
+}

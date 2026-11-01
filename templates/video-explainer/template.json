@@ -1,0 +1,78 @@
+{
+  "id": "video-explainer",
+  "title": "Motion explainer video",
+  "kind": "motion",
+  "purpose": "Animated explainer on the dsh-motion pipeline: title card, bullet, stat, chart and quote scenes, outro; MP4 via artifact motion export.",
+  "when": "A short (5 to 60 s) animated summary of a report, launch, metric or process, muted-first, for a page, a deck or social.",
+  "not_for": "Photorealistic footage (artifact media video) or a page around an existing MP4 (video-page).",
+  "entry": "composition.html",
+  "timing": {
+    "list": "scenes",
+    "text_fields": ["kicker", "title", "text", "bullets", "caption", "by"],
+    "base": 1.6,
+    "per_word": 0.3,
+    "min": 2.5,
+    "max": 9,
+    "min_by_type": {"chart": 3.5, "stat": 3, "outro": 2}
+  },
+  "schema": {
+    "type": "object",
+    "required": ["title", "scenes"],
+    "additionalProperties": false,
+    "properties": {
+      "title": {"type": "string", "minLength": 1, "description": "Video title (player page and file name)"},
+      "size": {"enum": ["landscape", "portrait", "square", "720p"], "default": "landscape", "description": "1920x1080, 1080x1920, 1080x1080 or 1280x720"},
+      "theme": {"enum": ["dark", "light"], "default": "dark"},
+      "accent": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#e0623f", "description": "The one accent colour"},
+      "accent2": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$", "default": "#4fb3a9", "description": "Secondary colour for chart bars"},
+      "brand": {"type": "string", "description": "Small text in the lower left corner of every scene"},
+      "scenes": {
+        "type": "array",
+        "minItems": 1,
+        "description": "In order. seconds is optional: without it the duration follows the amount of text (2.5 to 9 s)",
+        "items": {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"enum": ["title", "bullets", "stat", "chart", "quote", "outro"]},
+            "label": {"type": "string", "description": "Scene chip name in the player"},
+            "seconds": {"type": "number", "minimum": 1.5, "maximum": 30},
+            "kicker": {"type": "string", "maxLength": 40, "description": "Small uppercase line above"},
+            "title": {"type": "string", "maxLength": 80},
+            "text": {"type": "string", "maxLength": 160, "description": "title, outro: line under the title; quote: the quote"},
+            "bullets": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "string", "maxLength": 60}},
+            "value": {"type": "number", "description": "stat: the number counted up to"},
+            "decimals": {"type": "integer", "minimum": 0, "maximum": 3, "default": 0},
+            "prefix": {"type": "string", "maxLength": 3},
+            "unit": {"type": "string", "maxLength": 6, "description": "stat and chart: suffix such as % or KB"},
+            "caption": {"type": "string", "maxLength": 120, "description": "stat, chart: source or context line"},
+            "bars": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "required": ["label", "value"],
+                "additionalProperties": false,
+                "properties": {"label": {"type": "string", "maxLength": 18}, "value": {"type": "number", "minimum": 0}}
+              }
+            },
+            "highlight": {"type": "string", "description": "chart: label of the bar drawn in the accent colour"},
+            "by": {"type": "string", "description": "quote: attribution"}
+          }
+        }
+      }
+    }
+  },
+  "example": {
+    "title": "Templates first",
+    "brand": "DSH artifacts",
+    "scenes": [
+      {"type": "title", "label": "Title", "kicker": "Artifact templates", "title": "Templates first", "text": "Reuse the layout, write only the data.", "seconds": 2.2},
+      {"type": "bullets", "label": "How", "title": "Three steps", "bullets": ["Pick a template", "Write the data", "Publish"], "seconds": 3},
+      {"type": "chart", "label": "Chart", "title": "Output per artifact", "unit": " KB", "bars": [{"label": "From scratch", "value": 17}, {"label": "Markdown", "value": 11}, {"label": "Template data", "value": 3}], "highlight": "Template data", "caption": "Estimate, median output size", "seconds": 2.8},
+      {"type": "outro", "label": "Outro", "title": "artifact templates", "seconds": 2}
+    ]
+  }
+}

@@ -5,6 +5,13 @@ Artifacts live in ~/reports/ and are served at https://dsh.example.com/report/<n
 Everything you create here is attributed to your chat ($DSH_SESSION_ID), so it
 shows up under "This chat" in the Artifacts sidebar tab.
 
+TEMPLATES (check these FIRST: reuse a finished layout, write only the data)
+  artifact templates [--json]         every template: purpose, data fields, preview link
+  artifact template-info <id> [--json]   data schema + a minimal example
+  artifact new <name> --template <id> [--data file.json] [--force] [--check] [--json]
+                                     validate the data, fill the template, publish (no --data: example)
+  artifact template-preview [id]     republish ~/reports/template-preview-<id> from the example data
+
 CREATE
   artifact new <name> [--type T] [--title "..."]   scaffold and print path + URL
         T = report (default) | dashboard | plan | comparison | brief | interactive  -> <name>.md
@@ -191,7 +198,175 @@ app.innerHTML = '<h1>%(title)s</h1><p>Edit app.js.</p>';
 """
 
 
+def emit_json(obj):
+    """Lossless JSON for agents: plain objects, no NaN/Infinity, UTF-8."""
+    print(json.dumps(obj, ensure_ascii=False, allow_nan=False, indent=2))
+
+
+def _tpl():
+    import templates as T
+    return T
+
+
+def _tpl_row(t):
+    T = _tpl()
+    row = {"id": t["id"], "title": t.get("title", t["id"]), "kind": t.get("kind"), "purpose": t.get("purpose", ""),
+           "when": t.get("when", ""), "source": t.get("source"), "dir": t["dir"]}
+    if t.get("error"):
+        row["error"] = t["error"]
+        return row
+    row["fields"] = T.summary(t.get("schema", {}))
+    prev = T.preview_rel(t)
+    row["preview"] = "%s/%s" % (BASE, prev)
+    row["preview_published"] = (S.REPORT_DIR / prev.rstrip("/")).exists() or (S.REPORT_DIR / (prev[:-5] + ".md")).exists()
+    return row
+
+
+def cmd_templates(args):
+    T = _tpl()
+    as_json = flag(args, "--json", False)
+    rows = [_tpl_row(t) for t in T.all_templates()]
+    if as_json:
+        emit_json({"dirs": [str(d) for d in T.search_dirs()], "templates": rows})
+        return
+    if not rows:
+        print("(no templates found in %s)" % ", ".join(str(d) for d in T.search_dirs()))
+        return
+    for r in rows:
+        if r.get("error"):
+            print("%-17s BROKEN: %s" % (r["id"], r["error"]))
+            continue
+        print("%-17s %-8s %s" % (r["id"], r["kind"], r["purpose"]))
+        print("%-17s fields:  %s" % ("", r["fields"]))
+        print("%-17s preview: %s%s" % ("", r["preview"], "" if r["preview_published"] else " (not published here)"))
+    print("\nUse: artifact template-info <id>   then   artifact new <name> --template <id> --data data.json")
+    print("Templates: %s" % ", ".join(str(d) for d in T.search_dirs()))
+
+
+def cmd_template_info(args):
+    T = _tpl()
+    as_json = flag(args, "--json", False)
+    if not args:
+        die("usage: artifact template-info <id> [--json]")
+    try:
+        t = T.get(args[0])
+        ex = T.example_of(t)
+    except T.TemplateError as e:
+        die(str(e))
+    schema = t.get("schema", {})
+    mini = T.minimal(schema, ex)
+    if as_json:
+        row = _tpl_row(t)
+        row.update({"schema": schema, "example": ex, "minimal_example": mini,
+                    "readme": str(Path(t["dir"]) / "README.md")})
+        emit_json(row)
+        return
+    print("%s  (%s, %s)" % (t.get("title", t["id"]), t["kind"], t["dir"]))
+    print("purpose:  %s" % t.get("purpose", ""))
+    if t.get("when"):
+        print("use when: %s" % t["when"])
+    if t.get("not_for"):
+        print("not for:  %s" % t["not_for"])
+    print("preview:  %s/%s" % (BASE, T.preview_rel(t)))
+    print("\nDATA FIELDS (* = required)")
+    for path, ty, req, desc, dflt in T.fields(schema):
+        print("  %-28s %-16s %s%s" % (path + ("*" if req else ""), ty[:16], desc, (" [default %s]" % json.dumps(dflt, ensure_ascii=False)) if dflt is not None else ""))
+    print("\nMINIMAL EXAMPLE (full example: --json, or the template folder)")
+    print(json.dumps(mini, indent=2, ensure_ascii=False))
+    print("\nartifact new <name> --template %s --data data.json   (README: %s/README.md)" % (t["id"], t["dir"]))
+
+
+def new_from_template(stem, tid, data_file, force=False, check_only=False, title=None, as_json=False):
+    T = _tpl()
+    try:
+        t = T.get(tid)
+        if data_file:
+            p = Path(data_file).expanduser()
+            try:
+                raw = p.read_text(encoding="utf-8")
+            except OSError as e:
+                die("cannot read --data %s: %s" % (p, e.strerror))
+            try:
+                data = json.loads(raw)
+            except ValueError as e:
+                die("--data %s is not valid JSON: %s" % (p, e))
+            base = p.resolve().parent
+        else:
+            data = T.example_of(t)
+            base = Path(t["dir"])
+        if not isinstance(data, dict):
+            die("--data must hold a JSON object, got %s" % type(data).__name__)
+        errors, warnings = T.check(t, data, base)
+        for w in warnings:
+            print("warning: " + w, file=sys.stderr)
+        if errors:
+            if as_json:
+                emit_json({"ok": False, "template": tid, "errors": errors, "warnings": warnings})
+                sys.exit(2)
+            sys.stderr.write("artifact: data does not fit template %s:\n  %s\n" % (tid, "\n  ".join(errors)))
+            sys.stderr.write("(artifact template-info %s shows the fields and a minimal example)\n" % tid)
+            sys.exit(2)
+        if check_only:
+            if as_json:
+                emit_json({"ok": True, "template": tid, "errors": [], "warnings": warnings})
+            else:
+                print("ok: data fits template %s" % tid)
+            return
+        res = T.create(t, data, S.REPORT_DIR, stem, base, force=force, title=title)
+    except T.TemplateError as e:
+        if as_json:
+            emit_json({"ok": False, "template": tid, "errors": [str(e)]})
+            sys.exit(2)
+        sys.stderr.write("artifact: %s\n" % e)
+        sys.exit(2 if str(e).startswith("data does not fit") else 1)
+    rel = res["rel"]
+    claim(rel)
+    if rel.endswith(".md"):
+        claim(view_rel(rel))
+    for f in res["files"]:
+        try:
+            claim(str(Path(f).relative_to(S.REPORT_DIR)))
+        except ValueError:
+            pass
+    u = url(rel)
+    if as_json:
+        emit_json({"ok": True, "template": tid, "kind": res["kind"], "url": u, "files": res["files"], "warnings": res["warnings"]})
+        return
+    print("created from template %s: %s" % (tid, ", ".join(res["files"][-3:])))
+    if res["kind"] == "react":
+        print("edit    %s/data.json (the app reloads it), not the code" % (S.REPORT_DIR / rel))
+    elif res["kind"] == "markdown":
+        print("edit    %s directly, or change the data and rerun with --force" % (S.REPORT_DIR / rel))
+    else:
+        print("edit    %s.motion/index.html, or change the data and rerun with --force; export: artifact motion export %s" % (S.REPORT_DIR / stem, stem))
+    print(u)
+
+
+def cmd_template_preview(args):
+    """Publish ~/reports/template-preview-<id> from the template's own example data."""
+    T = _tpl()
+    ids = args or [t["id"] for t in T.all_templates() if not t.get("error")]
+    for tid in ids:
+        new_from_template("template-preview-" + tid, tid, None, force=True)
+
+
 def cmd_new(args):
+    tid = flag(args, "--template")
+    if tid:
+        if tid is True:
+            die("usage: artifact new <name> --template <id> [--data file.json] [--force] [--check] [--json]")
+        data_file = flag(args, "--data")
+        force = flag(args, "--force", False)
+        check_only = flag(args, "--check", False)
+        as_json = flag(args, "--json", False)
+        title = flag(args, "--title")
+        if not args:
+            die("usage: artifact new <name> --template <id> [--data file.json]")
+        stem = args[0].strip().strip("/")
+        stem = stem.rsplit(".", 1)[0] if stem.endswith((".md", ".html")) else stem
+        if not S.safe_rel(stem) or "/" in stem:
+            die("bad artifact name: %s" % stem)
+        return new_from_template(stem, tid, data_file if data_file is not True else None, force, check_only, title, as_json)
     typ = flag(args, "--type", "report")
     title = flag(args, "--title")
     if not args:
@@ -555,7 +730,9 @@ def main(argv):
              "show": cmd_show, "info": cmd_show, "versions": cmd_versions, "diff": cmd_diff,
              "restore": cmd_restore, "inbox": cmd_inbox, "state": cmd_state, "state-set": cmd_state_set,
              "public": cmd_public, "media": cmd_media, "libs": cmd_libs, "motion": cmd_motion,
-             "export": lambda a: cmd_motion(["export"] + a)}
+             "export": lambda a: cmd_motion(["export"] + a),
+             "templates": cmd_templates, "template-info": cmd_template_info,
+             "template-preview": cmd_template_preview}
     if cmd not in table:
         die("unknown command %s (artifact help)" % cmd)
     table[cmd](args)

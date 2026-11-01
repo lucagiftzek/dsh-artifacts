@@ -1,0 +1,99 @@
+{
+  "id": "report-text",
+  "title": "Long-form text report",
+  "kind": "markdown",
+  "purpose": "Clean long-form document: title, summary, key points, sections with callouts, footnotes.",
+  "when": "Written analysis, memo, proposal, post-mortem, research notes: mostly prose, few numbers.",
+  "not_for": "Number-heavy pages (use dashboard) or stories with photos (use article).",
+  "entry": "template.md",
+  "schema": {
+    "type": "object",
+    "required": ["title", "sections"],
+    "additionalProperties": false,
+    "properties": {
+      "title": {"type": "string", "minLength": 1, "description": "Page title"},
+      "subtitle": {"type": "string", "description": "One line under the title"},
+      "status": {"type": "string", "description": "Badge, for example draft or final"},
+      "date": {"type": "string", "description": "Shown in the header, for example 2026-11-01"},
+      "author": {"type": "string"},
+      "summary": {"type": "string", "description": "Lead paragraph(s), Markdown"},
+      "key_points": {"type": "array", "items": {"type": "string"}, "description": "Bullets in a highlighted box under the summary"},
+      "sections": {
+        "type": "array",
+        "minItems": 1,
+        "description": "Body sections in order",
+        "items": {
+          "type": "object",
+          "required": ["heading", "body"],
+          "additionalProperties": false,
+          "properties": {
+            "heading": {"type": "string", "minLength": 1},
+            "body": {"type": "string", "description": "Markdown; may use [^id] footnote references and any artifact-kit fence"},
+            "callout": {
+              "type": "object",
+              "required": ["text"],
+              "additionalProperties": false,
+              "description": "Optional tinted box after the body",
+              "properties": {
+                "tone": {"enum": ["info", "ok", "warn", "risk"], "default": "info"},
+                "text": {"type": "string", "description": "Markdown"}
+              }
+            }
+          }
+        }
+      },
+      "footnotes": {
+        "type": "array",
+        "description": "Notes referenced as [^id] in the text, listed at the end",
+        "items": {
+          "type": "object",
+          "required": ["id", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+            "text": {"type": "string", "description": "Markdown, one paragraph"}
+          }
+        }
+      },
+      "width": {"enum": ["narrow", "normal", "wide"], "default": "narrow", "description": "Reading width"},
+      "toc": {"type": "boolean", "default": true, "description": "Table of contents when there are 3 or more sections"}
+    }
+  },
+  "example": {
+    "title": "Moving the nightly backups to WhiteServer",
+    "subtitle": "A short proposal with the reasoning, the risks and the plan",
+    "status": "draft",
+    "date": "2026-11-01",
+    "author": "Example data",
+    "summary": "Nightly backups run on BlackServer today and compete with the crawlers for memory between 02:00 and 04:00. Moving them to WhiteServer frees about **3 GB** at peak and shortens the backup window, at the cost of one more SSH hop.",
+    "key_points": [
+      "Peak memory on BlackServer drops by about 3 GB during the window.",
+      "Restore drills stay identical: the archives keep the same names.",
+      "One new dependency: the WhiteServer to Google Drive link."
+    ],
+    "sections": [
+      {
+        "heading": "Why change anything",
+        "body": "The crawlers and the backup runner both peak after midnight. On three nights last week the host fell below the 1 GB free margin[^margin], which is the line we never cross.\n\nWhiteServer has 128 GB and is idle at that hour."
+      },
+      {
+        "heading": "What moves and what stays",
+        "body": "| Piece | Today | After |\n|---|---|---|\n| Database dumps | BlackServer | WhiteServer |\n| File archives | BlackServer | WhiteServer |\n| Restore drill | BlackServer | BlackServer |\n\nThe restore drill stays on BlackServer on purpose, so a restore still proves the archive is readable from a second machine.",
+        "callout": {"tone": "ok", "text": "No change for anyone who restores: the archive names and the drive folders stay the same."}
+      },
+      {
+        "heading": "Risks",
+        "body": "- The WhiteServer upload link becomes part of the backup path.\n- A failed run is now reported from another host; the alert route must follow[^alerts].",
+        "callout": {"tone": "warn", "text": "Keep the old timer disabled, not deleted, for two weeks."}
+      },
+      {
+        "heading": "Plan",
+        "body": "1. Copy the runner and its unit to WhiteServer.\n2. Run both in parallel for three nights and compare the archives.\n3. Disable the BlackServer timer."
+      }
+    ],
+    "footnotes": [
+      {"id": "margin", "text": "Estate rule: keep at least 1 GB RAM and one thread free on every host."},
+      {"id": "alerts", "text": "The uptime monitor already runs on WhiteServer, so the alert stays local."}
+    ]
+  }
+}

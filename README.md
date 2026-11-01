@@ -19,9 +19,10 @@ the chat, version history, and image / speech / video generation.
 | Indexer | server/indexer.py | niced child process: incremental transcript attribution + version snapshots |
 | Bridge | server/bridge.js | injected into every served HTML page: window.dsh, Claude/OpenAI aliases, live reload |
 | Media + AI | server/media.py | Mistral (Vibe subscription) chat + FLUX images, Voxtral TTS/STT, DashScope, local ComfyUI, Gemini video (opt-in) |
-| Kit | contrib/artifact-kit | Markdown → themed HTML (kpi, charts, callouts, timeline, progress, columns, details, mermaid, math, actions, forms, media) |
+| Kit | contrib/artifact-kit | Markdown → themed HTML (kpi, charts, callouts, timeline, progress, columns, details, mermaid, math, actions, forms, media, figures, pull quotes, lead, footnotes; templates report, dashboard, plan, comparison, brief, article) |
 | CLI | contrib/artifact | the agent interface: new, list, show, versions, diff, restore, inbox, state, state-set, public, media, libs, motion, export |
 | Motion | contrib/motion.py + motion/ (npm: hyperframes) | animated explainers as code: `artifact new X --type motion` scaffolds X.html (player: scrubber, scene chips, timed change requests, export buttons, latest render) + X.motion/index.html (HyperFrames composition, one paused GSAP timeline); `artifact motion check/snapshot/voice/export`; renders locally or on a remote host over ssh+rsync (DSH_MOTION_REMOTE_HOSTS) |
+| Templates | contrib/templates.py + templates/ (scripts/sync-templates.sh) | reusable layouts: `artifact templates`, `artifact template-info <id>`, `artifact new <name> --template <id> --data x.json` (JSON Schema validation, assets copied, `--json` output); read from $ARTIFACT_TEMPLATES, ~/estate/templates/artifacts, then the bundled templates/ copy (report-text, article, dashboard, review-queue, video-explainer, video-page) |
 | Library shelf | vendor/ (scripts/vendor.sh) | React, ReactDOM, Babel, Recharts, Tailwind, preact-htm, Chart.js, d3, three, mermaid, KaTeX, lucide, marked, PapaParse, Leaflet, GSAP (+ plugins under gsap/), HyperFrames player/runtime at /report/_lib/ |
 | Skill | skills/publish-artifact/SKILL.md | how agents should use all of the above |
 
@@ -45,6 +46,8 @@ the chat, version history, and image / speech / video generation.
 
 ## Token economics
 
+- Templates before everything: a known kind of deliverable is a JSON data file (a few
+  KB) filled into a finished layout, instead of a page written from scratch.
 - Markdown first (35-40 % fewer output tokens than hand-written HTML on a typical
   report, far more with charts), rendered server-side: no render step, no HTML in
   context.

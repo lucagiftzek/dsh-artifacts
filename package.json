@@ -14,6 +14,7 @@
     "server",
     "contrib",
     "scripts",
+    "templates",
     "cordis.patch.yml",
     "skills",
     "README.md",

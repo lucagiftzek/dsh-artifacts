@@ -18,11 +18,14 @@ Markdown = CommonMark + tables + strikethrough + task lists (- [x]).
 Fenced blocks named below become components; every other fence is code:
 
     kpi                     Label | Value | note | good|bad         (one tile per line)
-    chart bar|hbar|line|pie|donut   CSV: first column labels, other columns numeric series
+    chart bar|hbar|line|pie|donut [title]   CSV: first column labels, other columns numeric series
+    figure [hero|wide]      src | caption | credit   (one per line; 2+ lines = image grid)
+    quote                   pull quote; a line '||' then the attribution
+    lead                    opening paragraph in larger type
     callout info|ok|warn|risk       Markdown body in a tinted box
     timeline                when | what | detail
     progress                Label | value | max (default 100) | note
-    columns                 Markdown columns separated by a line containing only '||'
+    columns [2|3|4]         Markdown columns separated by a line containing only '||' (N = fixed count)
     details <summary text>  collapsible Markdown section
     mermaid                 diagram (flowchart, sequence, gantt, ...), rendered locally
     math                    TeX display math (KaTeX, rendered locally)
@@ -37,7 +40,8 @@ become audio players and .mp4/.webm/.mov video players.
 
 Front matter (optional, between --- lines): title, subtitle, template, status, date,
 width (narrow|normal|wide|full), toc (true|false), accent (#hex).
-template: report (default) | dashboard | plan | comparison | brief.
+template: report (default) | dashboard | plan | comparison | brief | article.
+Footnotes: [^id] in the text and a line "[^id]: note"; listed under Notes at the end.
 
 Output: one file; components needing a library (mermaid, math) load it from
 /report/_lib on the same server -- never a CDN.
@@ -54,8 +58,8 @@ from markdown_it import MarkdownIt
 BASE_URL = os.environ.get("ARTIFACT_BASE_URL", "/report")
 ARTIFACT_DIR = Path(os.environ.get("ARTIFACT_DIR", str(Path.home() / "reports"))).resolve()
 LIB = "/report/_lib"
-TEMPLATES = ("report", "dashboard", "plan", "comparison", "brief")
-WIDTH = {"report": 900, "plan": 900, "brief": 760, "dashboard": 1240, "comparison": 1200}
+TEMPLATES = ("report", "dashboard", "plan", "comparison", "brief", "article")
+WIDTH = {"report": 900, "plan": 900, "brief": 760, "dashboard": 1240, "comparison": 1200, "article": 780}
 WIDTH_WORDS = {"narrow": 720, "normal": 900, "wide": 1200, "full": 100000}
 SECRET_PATTERNS = [
     re.compile(r"sk-ant-(oat|api)|-----BEGIN [A-Z ]*PRIVATE KEY-----|(sk|ghp|gho|xox[baprs])-[A-Za-z0-9]{16,}"),
@@ -65,6 +69,9 @@ SERIES = ["var(--accent)", "#4f8fbf", "#7a9a4a", "#b38b2d", "#8a6bb8", "#5f9e96"
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".oga", ".m4a", ".aac", ".flac", ".opus")
 VIDEO_EXT = (".mp4", ".webm", ".mov", ".m4v")
 FENCE_RX = re.compile(r"(?ms)^\x60\x60\x60[^\n]*\n(.*?)^\x60\x60\x60")
+CODE_FENCE_RX = re.compile(r"(?ms)^\x60\x60\x60([^\n]*)\n(.*?)^\x60\x60\x60")
+COMPONENTS = {"kpi", "chart", "callout", "timeline", "progress", "columns", "details", "actions", "form",
+              "figure", "quote", "lead", "math", "latex", "tex"}
 
 esc = html.escape
 
@@ -401,7 +408,21 @@ def build_md(state):
         if name == "kpi":
             return render_kpi(tok.content, md)
         if name == "chart":
-            return render_chart(arg or "bar", tok.content)
+            out = render_chart(arg or "bar", tok.content)
+            title = rest.split(None, 1)[1].strip() if len(rest.split(None, 1)) > 1 else ""
+            if title and out.startswith("<figure"):
+                head = out.index(">") + 1
+                out = (out[:head] + '<div class="chart-t">%s</div>' % md.renderInline(title)
+                       + out[head:].replace('role="img"', 'role="img" aria-label="%s"' % esc(title), 1))
+            return out
+        if name == "figure":
+            return render_figures(arg, tok.content, md)
+        if name == "quote":
+            parts = re.split(r"(?m)^\s*\|\|\s*$", tok.content, maxsplit=1)
+            by = '<figcaption>%s</figcaption>' % md.renderInline(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else ""
+            return '<figure class="pullquote"><blockquote>%s</blockquote>%s</figure>' % (md.render(parts[0]), by)
+        if name == "lead":
+            return '<div class="lead">%s</div>' % md.render(tok.content)
         if name == "timeline":
             return render_timeline(tok.content, md)
         if name == "progress":
@@ -411,7 +432,8 @@ def build_md(state):
             return '<aside class="callout %s">%s</aside>' % (tone, md.render(tok.content))
         if name == "columns":
             cols = re.split(r"(?m)^\s*\|\|\s*$", tok.content)
-            return '<div class="cols">%s</div>' % "".join('<div class="col">%s</div>' % md.render(c) for c in cols)
+            fixed = " cols-%s" % arg if arg in ("2", "3", "4") else ""
+            return '<div class="cols%s">%s</div>' % (fixed, "".join('<div class="col">%s</div>' % md.render(c) for c in cols))
         if name == "details":
             return '<details><summary>%s</summary>%s</details>' % (md.renderInline(rest or "Details"), md.render(tok.content))
         if name == "mermaid":
@@ -428,6 +450,66 @@ def build_md(state):
 
     md.renderer.rules["fence"] = fence
     return md
+
+
+def render_figures(arg, body, md):
+    """figure [hero|wide]: one 'src | caption | credit' per line; two or more lines become a grid."""
+    figs = []
+    for line in body.strip().splitlines():
+        if not line.strip():
+            continue
+        c = cells(line) + ["", ""]
+        src, cap, credit = c[0], c[1], c[2]
+        if not src:
+            continue
+        alt = re.sub(r"[*_`\[\]]", "", cap) or Path(src.split("?")[0]).stem.replace("-", " ")
+        tail = ""
+        if cap or credit:
+            tail = "<figcaption>%s%s</figcaption>" % (md.renderInline(cap),
+                                                       ' <span class="credit">%s</span>' % md.renderInline(credit) if credit else "")
+        figs.append('<figure class="fig%s"><img src="%s" alt="%s" loading="lazy" decoding="async">%s</figure>'
+                    % (" hero" if arg == "hero" else " wide" if arg == "wide" else "", esc(src, quote=True), esc(alt, quote=True), tail))
+    if len(figs) > 1:
+        return '<div class="figs">%s</div>' % "".join(figs)
+    return "".join(figs)
+
+
+FOOTNOTE_DEF = re.compile(r"(?m)^\[\^([^\]\s]+)\]:[ \t]*(.*(?:\n(?:[ \t]{2,}|\t).*)*)\n?")
+
+
+def extract_footnotes(body_md):
+    """Markdown footnotes: [^id] in the text, '[^id]: note' on its own line. Fenced code is left alone."""
+    chunks = re.split(r"(?ms)(^\x60\x60\x60.*?^\x60\x60\x60[^\n]*$)", body_md)
+    defs = {}
+    for i in range(0, len(chunks), 2):
+        def keep(m):
+            defs[m.group(1)] = re.sub(r"\n[ \t]+", " ", m.group(2)).strip()
+            return ""
+        chunks[i] = FOOTNOTE_DEF.sub(keep, chunks[i])
+    if not defs:
+        return body_md, []
+    order = []
+
+    def ref(m):
+        k = m.group(1)
+        if k not in defs:
+            return m.group(0)
+        if k not in order:
+            order.append(k)
+        n = order.index(k) + 1
+        return '<sup class="fnref"><a href="#fn-%s" id="fnref-%s" aria-label="Footnote %d">%d</a></sup>' % (slug(k), slug(k), n, n)
+    for i in range(0, len(chunks), 2):
+        chunks[i] = re.sub(r"\[\^([^\]\s]+)\](?!:)", ref, chunks[i])
+    order += [k for k in defs if k not in order]
+    return "".join(chunks), [(k, defs[k]) for k in order]
+
+
+def render_footnotes(notes, md):
+    if not notes:
+        return ""
+    items = "".join('<li id="fn-%s">%s <a href="#fnref-%s" class="fnback" aria-label="Back to the text">\u21a9</a></li>'
+                    % (slug(k), md.renderInline(t), slug(k)) for k, t in notes)
+    return '<section class="footnotes" aria-label="Footnotes"><h2 id="notes">Notes</h2><ol>%s</ol></section>' % items
 
 
 def slug(text):
@@ -472,7 +554,9 @@ def auto_width(template, body_md, meta):
     base = WIDTH[template]
     # Wide tables or long code lines need room; a short brief does not.
     cols = max((l.count("|") - 1 for l in body_md.splitlines() if l.strip().startswith("|")), default=0)
-    longest_code = max((len(x) for blk in FENCE_RX.findall(body_md) for x in blk.splitlines()), default=0)
+    # Only real code blocks: component fences (figure, quote, kpi...) wrap their own text.
+    code = [m.group(2) for m in CODE_FENCE_RX.finditer(body_md) if (m.group(1).split() or [""])[0].lower() not in COMPONENTS]
+    longest_code = max((len(x) for blk in code for x in blk.splitlines()), default=0)
     if cols >= 7 or longest_code > 110:
         base = max(base, 1200)
     elif cols >= 5:
@@ -537,6 +621,21 @@ nav.toc{font-size:14px;margin:0 0 20px;padding:10px 14px;background:var(--panel)
 .opts{display:flex;flex-wrap:wrap;gap:6px 14px}.opt{display:inline-flex;gap:5px;align-items:center}.form-b{display:flex;justify-content:flex-end}
 form[data-dsh-done] .form-b::before{content:"sent";color:var(--ok);margin-right:auto;align-self:center;font-size:13px}
 .err{color:var(--risk)}footer{margin-top:48px;font-size:12px;color:var(--muted)}
+.chart-t{flex-basis:100%;font-weight:600;font-size:14px;margin:0 0 8px}
+.fig{margin:20px 0}.fig img{margin:0;width:100%;border-radius:4px;background:var(--line)}.fig figcaption{font-size:13.5px;color:var(--muted);margin-top:6px;line-height:1.45}
+.fig .credit{font-size:12px;opacity:.85}.fig .credit::before{content:"Credit: "}
+.fig.hero{margin:0 0 28px}.fig.hero img{max-height:62vh;object-fit:cover}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:16px;margin:20px 0}.figs .fig{margin:0}
+.pullquote{margin:28px 0;padding:6px 0 6px 20px;border-left:4px solid var(--accent)}.pullquote blockquote{margin:0;padding:0;border:0;color:var(--ink);font-size:clamp(19px,2.6vw,23px);line-height:1.4;font-weight:550}
+.pullquote blockquote p{margin:0}.pullquote figcaption{margin-top:8px;font-size:14px;color:var(--muted)}
+.lead{font-size:clamp(17px,2.2vw,19px);line-height:1.6;color:var(--ink);margin:4px 0 20px}.lead p{margin:0 0 10px}
+sup.fnref{font-size:.72em;line-height:0}sup.fnref a{text-decoration:none;padding:0 2px}
+.footnotes{margin-top:40px;font-size:14px;color:var(--muted)}.footnotes h2{font-size:15px}.footnotes li{margin:4px 0}.fnback{text-decoration:none;margin-left:4px}
+body.t-article main{font-size:17.5px;line-height:1.7}body.t-article h2{border-top:0;padding-top:0;margin-top:40px}
+.chart-cap{margin:-8px 0 18px;color:var(--muted)}
+@media (min-width:860px){.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.cols .chart{margin-top:0}.col>.chart:only-child{height:calc(100% - 16px)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (max-width:640px){.timeline li{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(auto-fit,minmax(min(140px,100%),1fr))}}
 @media print{body{background:#fff}nav.toc,.actions,.dsh-form .form-b{display:none}.chart,.kpi,.callout{break-inside:avoid}}
 """
@@ -562,7 +661,9 @@ def render_text(text, name="artifact.md"):
     if m:
         body_md = body_md[m.end():]
     title = title or Path(name).stem.replace("-", " ").title()
+    body_md, notes = extract_footnotes(body_md)
     body, toc = post_process(md.render(body_md))
+    body += render_footnotes(notes, md)
     want_toc = meta.get("toc", "").lower()
     show_toc = (want_toc == "true") or (want_toc != "false" and template in ("report", "plan", "comparison") and len(toc) >= 3)
     toc_html = ('<nav class="toc">' + "".join('<a href="#%s">%s</a>' % (i, t) for i, t in toc) + "</nav>") if show_toc else ""
@@ -584,14 +685,14 @@ def render_text(text, name="artifact.md"):
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%s</title><meta name="generator" content="artifact-kit 2 (%s)">
 <style>%s%s</style></head>
-<body style="--w:%dpx"><main>
+<body class="t-%s" style="--w:%dpx"><main>
 <header class="top"><div class="brand">artifact \u00b7 %s</div><h1>%s</h1>
 %s
 %s</header>
 %s%s
 <footer>Rendered by artifact-kit from %s.</footer>
 </main><script>%s</script>%s</body></html>
-""" % (esc(re.sub(r"<[^>]+>", "", title)), template, CSS, accent_css, width, template, md.renderInline(title), sub, metabar,
+""" % (esc(re.sub(r"<[^>]+>", "", title)), template, CSS, accent_css, template, width, template, md.renderInline(title), sub, metabar,
        toc_html, body, esc(Path(name).name), JS, libs)
 
 

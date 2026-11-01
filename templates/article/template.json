@@ -1,0 +1,113 @@
+{
+  "id": "article",
+  "title": "Article with photos and charts",
+  "kind": "markdown",
+  "purpose": "Editorial article: hero photo, captioned figures from local files, inline charts from data series, pull quotes, sources.",
+  "when": "A story or explainer meant to be read: newsletter piece, case study, market note, blog draft.",
+  "not_for": "Internal status or KPI pages (use dashboard) and plain memos (use report-text).",
+  "entry": "template.md",
+  "schema": {
+    "type": "object",
+    "required": ["title", "blocks"],
+    "additionalProperties": false,
+    "$defs_note": "image src fields are local files (copied to <name>-files/) or URLs starting with / or http",
+    "properties": {
+      "title": {"type": "string", "minLength": 1},
+      "subtitle": {"type": "string", "description": "Standfirst under the title"},
+      "author": {"type": "string"},
+      "date": {"type": "string"},
+      "hero": {
+        "type": "object",
+        "required": ["src"],
+        "additionalProperties": false,
+        "description": "Large photo at the top",
+        "properties": {
+          "src": {"type": "string", "x-asset": true, "description": "Image file (path relative to the data file) or URL"},
+          "caption": {"type": "string"},
+          "credit": {"type": "string"}
+        }
+      },
+      "lead": {"type": "string", "description": "Opening paragraph, larger type, Markdown"},
+      "blocks": {
+        "type": "array",
+        "minItems": 1,
+        "description": "The article body in order. type = text | heading | figure | gallery | chart | quote | callout",
+        "items": {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"enum": ["text", "heading", "figure", "gallery", "chart", "quote", "callout"]},
+            "text": {"type": "string", "description": "text: Markdown; heading: the heading; quote: the quote; callout: Markdown"},
+            "src": {"type": "string", "x-asset": true, "description": "figure: image file or URL"},
+            "caption": {"type": "string", "description": "figure, chart: caption or source line"},
+            "credit": {"type": "string", "description": "figure: photo credit"},
+            "wide": {"type": "boolean", "description": "figure: full column width without side margins"},
+            "images": {
+              "type": "array",
+              "description": "gallery: two or more images in a grid",
+              "items": {
+                "type": "object",
+                "required": ["src"],
+                "additionalProperties": false,
+                "properties": {
+                  "src": {"type": "string", "x-asset": true},
+                  "caption": {"type": "string"},
+                  "credit": {"type": "string"}
+                }
+              }
+            },
+            "kind": {"enum": ["bar", "hbar", "line", "pie", "donut"], "description": "chart: chart type"},
+            "title": {"type": "string", "description": "chart: title above the chart"},
+            "columns": {"type": "array", "items": {"type": "string"}, "description": "chart: label column name, then one name per series"},
+            "rows": {"type": "array", "items": {"type": "array", "items": {"type": ["string", "number"]}}, "description": "chart: [label, value, value...] per row"},
+            "by": {"type": "string", "description": "quote: who said it"},
+            "tone": {"enum": ["info", "ok", "warn", "risk"], "description": "callout: colour"}
+          }
+        }
+      },
+      "sources": {
+        "type": "array",
+        "description": "Numbered list at the end",
+        "items": {
+          "type": "object",
+          "required": ["title"],
+          "additionalProperties": false,
+          "properties": {
+            "title": {"type": "string"},
+            "url": {"type": "string", "pattern": "^(https?://|/)"},
+            "publisher": {"type": "string"},
+            "date": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "example": {
+    "title": "Small solar on terraced land",
+    "subtitle": "How hillside farms in the Peloponnese turned old olive terraces into a second harvest",
+    "author": "Example data",
+    "date": "2026-11-01",
+    "hero": {"src": "example/hero.jpg", "caption": "Panels follow the old terrace lines, so the slope needs no new earthworks.", "credit": "Generated illustration"},
+    "lead": "Terraces built for olives two centuries ago now carry rows of solar panels. The trees stay; the panels sit on the flat steps between them, and the farm sells power in the hours when the grove needs nothing.",
+    "blocks": [
+      {"type": "text", "text": "The idea is simple. A terrace is already level, already drained and already reachable by a path. Mounting frames need little more than a few ground screws, and the panels shade the soil just enough to keep it from drying out in August."},
+      {"type": "heading", "text": "The numbers so far"},
+      {"type": "text", "text": "Output follows the season, with a long plateau from May to August. The figures below are illustrative and labelled as example data."},
+      {"type": "chart", "kind": "line", "title": "Monthly output, MWh (example data)", "columns": ["Month", "Terrace farm", "Flat-field farm"], "rows": [["Jan", 21, 24], ["Mar", 38, 41], ["May", 56, 58], ["Jul", 61, 63], ["Sep", 47, 50], ["Nov", 26, 28]], "caption": "Example data: two farms of similar size, 2026."},
+      {"type": "quote", "text": "We used to harvest once a year. Now the hill pays us every month.", "by": "A grower in the example story"},
+      {"type": "gallery", "images": [
+        {"src": "example/fig1.jpg", "caption": "Checks are done on foot along the terrace paths.", "credit": "Generated illustration"},
+        {"src": "example/fig2.jpg", "caption": "Village roofs carry the same panels at a smaller scale.", "credit": "Generated illustration"}
+      ]},
+      {"type": "heading", "text": "What it costs"},
+      {"type": "chart", "kind": "hbar", "title": "Installed cost per kW, EUR (example data)", "columns": ["Item", "EUR per kW"], "rows": [["Panels", 260], ["Frames and screws", 140], ["Inverters", 110], ["Labour", 180], ["Grid connection", 90]]},
+      {"type": "callout", "tone": "info", "text": "**Example data.** Replace every figure in this template with sourced numbers before publishing."},
+      {"type": "text", "text": "The open question is maintenance: terraces are narrow, and cleaning crews work by hand. Several farms now share one crew across a valley."}
+    ],
+    "sources": [
+      {"title": "Example source: regional energy statistics", "url": "https://example.org/energy-stats", "publisher": "Example Agency", "date": "2026"},
+      {"title": "Example source: terrace agriculture survey", "publisher": "Example University"}
+    ]
+  }
+}

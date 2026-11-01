@@ -13,6 +13,28 @@ every change, and is served at https://dsh.example.com/report/<name>.
 Reply with the URL as a markdown link plus one or two sentences. Never paste the
 contents into the chat too. Never put secrets in an artifact.
 
+## 0. Templates first (always the first step)
+
+Before writing any deliverable, run `artifact templates` and pick a fitting template. A template is a
+finished, tested layout: you write only a small JSON data file, the CLI validates it and publishes the page.
+That costs a few KB of output instead of a whole page, and every deliverable of a kind looks the same.
+
+    artifact templates                          # id, purpose, data fields, preview link of each template
+    artifact template-info <id>                 # field list + minimal example (add --json for the schema)
+    artifact new <name> --template <id> --data /tmp/<name>.json [--check] [--force] [--json]
+
+Bundled set: report-text (memo, long prose), article (photos, charts, quotes, sources), dashboard
+(KPI tiles, charts, table), review-queue (approve/edit/reject a list), video-explainer (animated
+explainer to MP4), video-page (player page with chapters for an existing MP4). Templates are read from
+$ARTIFACT_TEMPLATES, ~/estate/templates/artifacts, then the plugin's templates/ folder.
+
+- Image and video fields take local paths; they are copied next to the artifact. Bad data exits 2 with
+  one line per problem: fix and rerun.
+- Small later changes: edit the generated `~/reports/<name>.md` (or `<name>/data.json` for react templates).
+  Changed numbers: update the JSON and rerun with `--force`.
+- Generate from scratch (sections below) only when nothing fits; if the layout will come back, save it as a
+  template (templates/README.md explains the folder format).
+
 ## 1 - Pick the cheapest form that does the job
 
 | Need | Write | URL |
@@ -45,15 +67,17 @@ the .html. Starters: artifact new <name> --type report|dashboard|plan|comparison
 ## 3 - Markdown components (artifact help md for the full list)
 
     ```kpi                 Label | Value | note | good|bad
-    ```chart bar|hbar|line|pie|donut   CSV, first column = labels
+    ```chart bar|hbar|line|pie|donut [title]   CSV, first column = labels
     ```callout info|ok|warn|risk       ```timeline   when | what | detail
     ```progress            Label | value | max | note
-    ```columns             blocks separated by a line '||'
+    ```columns [2|3|4]     blocks separated by a line '||'
+    ```figure [hero|wide]  src | caption | credit (2+ lines = grid)   ```quote  text, '||', attribution
+    ```lead                larger opening paragraph    footnotes: [^id] + a line "[^id]: note"
     ```details Title       collapsible       ```mermaid / ```math (KaTeX)
     ```actions             Label | message to send to the chat | context
     ```form Title [context] Label | text|textarea|number|date|select a/b|radio a/b|check a/b|range 0-10
 
-Front matter: title, subtitle, template (report|dashboard|plan|comparison|brief),
+Front matter: title, subtitle, template (report|dashboard|plan|comparison|brief|article),
 status, date, width (narrow|normal|wide|full), toc, accent. Media: ![cap](media/x.png),
 [audio](media/x.mp3) and .mp4/.webm links become players.
 

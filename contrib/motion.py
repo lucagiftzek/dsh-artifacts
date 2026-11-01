@@ -178,7 +178,7 @@ COMPOSITION = r"""<!doctype html>
   tl.fromTo("#s3-head", { y: 40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, S3 + 0.25);
   tl.fromTo("#s3-cap", { opacity: 0 }, { opacity: 1, duration: 0.6 }, S3 + 0.7);
 
-  window.__timelines["main"] = tl;
+  (window.__timelines = window.__timelines || {})["main"] = tl;  // guarded: the player iframe may not have the registry yet
 </script>
 <script>
   /* DSH: opened directly in the Artifacts sidebar -> show the player page instead.
