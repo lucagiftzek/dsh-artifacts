@@ -48,9 +48,9 @@ try {
     }
     return host
   }
-  const origLog = console.log
+  const origErr = console.error
   const captured = []
-  console.log = (...a) => { const s = a.join(' '); if (s.startsWith('dsh-artifacts:')) captured.push(s); else origLog(...a) }
+  console.error = (...a) => { const s = a.join(' '); if (s.startsWith('dsh-artifacts:')) captured.push(s); else origErr(...a) }
 
   const host = mockHost()
   index.apply(host.ctx, {}, { defineTool: (def) => def })
@@ -86,10 +86,10 @@ try {
 const reg = []; const ctx = { inject(d, cb) { cb({ tools: { register: (x) => reg.push(x.name) }, skills: { registerProvider() {} } }) } };
 m.apply(ctx, {}); await m.apply.ready; console.log('REGISTERED=' + reg.length)`)
   const r = spawnSync(process.execPath, [probe], { encoding: 'utf8', env: { ...process.env, DSH_HOME: join(iso, 'dsh'), HOME: iso, DSH_ARTIFACTS_TOOLS_MAIN: '' } })
-  ok(r.status === 0 && /REGISTERED=0/.test(r.stdout) && /ARTIFACT_TOOLS_UNAVAILABLE/.test(r.stdout), 'separate process without a resolvable dsh-tools: loads, registers 0, one log line')
+  ok(r.status === 0 && /REGISTERED=0/.test(r.stdout) && /ARTIFACT_TOOLS_UNAVAILABLE/.test(r.stderr) && !/dsh-artifacts:/.test(r.stdout), 'separate process without a resolvable dsh-tools: loads, registers 0, one log line on stderr (stdout stays clean)')
   const off = spawnSync(process.execPath, [probe], { encoding: 'utf8', env: { ...process.env, DSH_ARTIFACTS_TOOLS: '0' } })
-  ok(off.status === 0 && /REGISTERED=0/.test(off.stdout) && /disabled/.test(off.stdout), 'kill switch DSH_ARTIFACTS_TOOLS=0')
-  console.log = origLog
+  ok(off.status === 0 && /REGISTERED=0/.test(off.stdout) && /disabled/.test(off.stderr), 'kill switch DSH_ARTIFACTS_TOOLS=0')
+  console.error = origErr
 
   // the real defineTool from an installed core
   let realDefine = null
