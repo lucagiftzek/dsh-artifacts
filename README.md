@@ -1,10 +1,15 @@
 # dsh-artifacts 2
 
+[![npm](https://img.shields.io/npm/v/%40lucagiftzek%2Fdsh-artifacts?label=npm)](https://www.npmjs.com/package/@lucagiftzek/dsh-artifacts)
+
 An Artifacts tab that previews every file your agents make, with live reload, version history and templates.
+
+Install from npm: `dsh plugin --profile web add @lucagiftzek/dsh-artifacts`, or from GitHub: `dsh plugin --profile web add github:lucagiftzek/dsh-artifacts`.
 
 ```bash
 dsh plugin --profile web add dsh-better-sidebar   # the tab host, skip if installed
-dsh plugin --profile web add github:lucagiftzek/dsh-artifacts
+dsh plugin --profile web add @lucagiftzek/dsh-artifacts
+# or from GitHub: dsh plugin --profile web add github:lucagiftzek/dsh-artifacts
 # restart dsh web; the /report/ server module goes into your reverse proxy (see Install / operate)
 ```
 

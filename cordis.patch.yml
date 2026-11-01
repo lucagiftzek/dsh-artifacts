@@ -11,4 +11,4 @@
 # Remove:    dsh plugin --profile web remove dsh-artifacts
 - insert:
     - id: dsh-artifacts
-      name: 'dsh-artifacts'
+      name: '@lucagiftzek/dsh-artifacts'

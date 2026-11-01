@@ -21,7 +21,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const ID = 'dsh-artifacts'
+const ID = '@lucagiftzek/dsh-artifacts'
 
 /** Platform seed words the shell shares into the module table. The factory's
  * `require` resolves them to the shell's own React, never a bundled duplicate. */

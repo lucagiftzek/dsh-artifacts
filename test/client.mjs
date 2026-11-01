@@ -13,7 +13,7 @@ const registered = []
 globalThis.window = { __ModuleLoader__: { load: (r) => registered.push(r) } }
 globalThis.location = { origin: 'https://gui.example.com' }
 new Function(readFileSync(resolve(here, '..', 'lib', 'client.js'), 'utf8'))()
-ok(registered.length === 1 && registered[0].id === 'dsh-artifacts', 'bundle registers one module')
+ok(registered.length === 1 && registered[0].id === '@lucagiftzek/dsh-artifacts', 'bundle registers one module')
 const React = req('react')
 const mod = registered[0].factory((n) => {
   if (n === 'react') return React
