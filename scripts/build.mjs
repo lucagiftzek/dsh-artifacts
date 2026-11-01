@@ -24,7 +24,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const ID = 'dsh-artifacts'
 
 /** Platform seed words the shell shares into the module table. The factory's
- * `require` resolves them to the shell's own React — never a bundled duplicate. */
+ * `require` resolves them to the shell's own React, never a bundled duplicate. */
 const CLIENT_EXTERNALS = ['react', 'react/jsx-runtime']
 
 async function loadEsbuild() {

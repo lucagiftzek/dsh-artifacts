@@ -35,12 +35,12 @@ can run as-is or steal pieces from.
 | Field | Required | Meaning |
 |---|---|---|
 | `items` | yes | Array, newest first. Anything else degrades to an empty list. |
-| `name` | yes | Display name. Also the row's identity — keep it stable. |
+| `name` | yes | Display name. Also the row's identity, keep it stable. |
 | `url` | yes | Relative or absolute. Used verbatim as the iframe `src`, so a relative path inherits the GUI's origin and session cookie. |
 | `ext` | no | Lowercase, no dot. Drives the type badge; unknown values fall back to the extension text. |
 | `size` | no | Bytes. Rendered as B / kB / MB. |
 | `mtime` | no | Unix **seconds**. Rendered as `just now` / `5m ago` / `2h ago` / a locale date. |
-| `mine` | no | Boolean. True when this session produced the artifact — see [Optional: per-session scope](#optional-per-session-scope). |
+| `mine` | no | Boolean. True when this session produced the artifact, see [Optional: per-session scope](#optional-per-session-scope). |
 | `count` | no | Informational; the plugin counts `items` itself. |
 
 An object-level `error` string is surfaced inline instead of an empty state,
@@ -57,7 +57,7 @@ localStorage['dsh-artifacts:indexUrl'] = '/artifacts/index.json'
 
 One artifact directory usually serves every session on the host, so an
 unfiltered list mixes this chat's output with everyone else's. The tab can
-narrow it to the current chat — but only if the endpoint can say which artifacts
+narrow it to the current chat, but only if the endpoint can say which artifacts
 belong to which session.
 
 When the sidebar supplies a session id, the request gains one parameter:
@@ -80,7 +80,7 @@ endpoint that supports scoping answers with `mine` on every item:
 
 **Ignoring the parameter is a supported answer.** Omit `mine` entirely and the
 tab hides its `This chat` / `All` toggle and lists everything, exactly as before
-— the reference server in `contrib/` does this. What it must not do is emit
+the reference server in `contrib/` does this. What it must not do is emit
 `mine: false` for artifacts it knows nothing about, because the tab reads a
 boolean as "attribution ran" and would then offer a permanently empty
 `This chat` view. Say nothing when you cannot say anything true.
@@ -94,28 +94,28 @@ to it. Four details decide whether that is accurate:
   bundles reasoning, prose and tool calls in one JSON line, so a filename
   mentioned in reasoning is indistinguishable from one in an argument unless you
   walk the parsed record and read only tool-call arguments. Regexing the raw line
-  attributes artifacts to sessions that merely *talked about* them — observed in
+  attributes artifacts to sessions that merely *talked about* them, observed in
   practice as one session claiming four files another had written.
 - **`arguments` is a JSON-encoded string.** A shell command reads as
   `{"command":"set -e\ncp -p a b"}`, where the newline is a two-character
   escape. Any test for a leading verb or a redirection must decode it first, or
   it matches only at position 0.
 - **Reading is not authoring.** For `write`/`edit` the path in the argument is
-  enough. For a shell or code tool, require something that creates the file — a
+  enough. For a shell or code tool, require something that creates the file, a
   `cp`/`mv`/`install`/`tee`/`rsync` verb, a `publish-artifact` call, or a
   redirection whose *target* is the artifact (`grep pat x.html > out.txt` writes
   somewhere else and must not claim `x.html`). Tool *results* are excluded: a
   command's output echoing a filename is not authorship.
 - **Be conservative.** An unclaimed artifact still appears under `All`, while a
-  falsely claimed one makes `This chat` show somebody else's work — the exact
+  falsely claimed one makes `This chat` show somebody else's work, the exact
   confusion scoping exists to remove. Code tools that write through the harness's
   own `write` tool are covered by its dispatch records; ones that write with
   plain Python file I/O leave no trace and simply go unclaimed.
 
 Scanning a several-megabyte transcript costs a few hundred milliseconds, so cache
-it per session — keyed on a fingerprint of the listing rather than a TTL, which
+it per session, keyed on a fingerprint of the listing rather than a TTL, which
 rescans exactly when the artifact set changes instead of on a timer, and never
-leaves a just-published file unattributed — and only scan when the `session`
+leaves a just-published file unattributed, and only scan when the `session`
 parameter is actually present. Validate the id against a strict pattern before it
 goes anywhere near a path, and treat a scan failure as "no attribution" rather
 than as an error: a shared list still works, and it must never be possible for
@@ -131,7 +131,7 @@ artifact and to `All` otherwise, remembers an explicit choice in
 The index is usually one auth hop from the internet, so treat it as a public
 surface even when it is not:
 
-- **Metadata only.** The index must never contain file contents — names, sizes
+- **Metadata only.** The index must never contain file contents: names, sizes
   and mtimes only. A directory listing is a disclosure surface of its own; do
   not serve one for `/etc` or a home directory.
 - **Fence to one directory.** Resolve the requested name against a single root
@@ -149,14 +149,14 @@ surface even when it is not:
 
 If the server injects a few lines into served `.html`, previews refresh
 themselves when a file is regenerated, and a browser tab left open on an artifact
-tracks it too. The artifact on disk stays a plain static file — nothing has to
+tracks it too. The artifact on disk stays a plain static file, nothing has to
 opt in.
 
 The mechanism `contrib/artifact-index-server.py` uses:
 
 1. Before `</body>` (case-insensitive; appended if absent) inject a script that
    polls `<same url>?artifact-etag=1` on an interval.
-2. Answer that probe with a ~24-byte etag — `"<mtime_ns>-<size>"` in hex — not a
+2. Answer that probe with a ~24-byte etag (`"<mtime_ns>-<size>"` in hex), not a
    re-download of the document.
 3. When the etag differs from the one the page was served with, `location.reload()`.
 

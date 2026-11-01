@@ -1,4 +1,4 @@
-"""python3 test/test_artifact_kit.py — renders every starter and checks the guards."""
+"""python3 test/test_artifact_kit.py: renders every starter and checks the guards."""
 import subprocess, tempfile, unittest
 from pathlib import Path
 

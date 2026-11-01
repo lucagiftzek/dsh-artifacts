@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.1.0
+## 2.1.0 (2026-11-01)
 
 Templates for every agent on every install, and agents can create templates.
 
