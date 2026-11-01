@@ -4,7 +4,7 @@ A React + Tailwind page around an existing video: native player, chapter list wi
 highlighted, a clickable chapter bar under the video, optional WebVTT captions, optional clickable transcript,
 description, download button and links. Deep links: `#t=75` starts at 1:15.
 
-Preview: https://llm.tzekos.eu/report/template-preview-video-page/
+Preview: `artifact template-preview video-page`.
 
 ## Use it
 

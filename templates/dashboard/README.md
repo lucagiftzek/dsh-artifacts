@@ -4,7 +4,7 @@ A thin, documented layer over the artifact-kit dashboard renderer: the renderer 
 SVG charts, progress bars and sortable tables, so this template only fixes the layout (tiles, alert,
 charts two per row, progress, table, notes) and moves the numbers into one JSON file.
 
-Preview: https://llm.tzekos.eu/report/template-preview-dashboard.html
+Preview: `artifact template-preview dashboard` (publishes the example data as a page you can open).
 
 ## Use it
 

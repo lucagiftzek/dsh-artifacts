@@ -60,40 +60,40 @@
     }
   },
   "example": {
-    "title": "Moving the nightly backups to WhiteServer",
+    "title": "Moving the nightly backups to the second server",
     "subtitle": "A short proposal with the reasoning, the risks and the plan",
     "status": "draft",
     "date": "2026-11-01",
     "author": "Example data",
-    "summary": "Nightly backups run on BlackServer today and compete with the crawlers for memory between 02:00 and 04:00. Moving them to WhiteServer frees about **3 GB** at peak and shortens the backup window, at the cost of one more SSH hop.",
+    "summary": "Nightly backups run on the main server today and compete with the crawlers for memory between 02:00 and 04:00. Moving them to the second server frees about **3 GB** at peak and shortens the backup window, at the cost of one more SSH hop.",
     "key_points": [
-      "Peak memory on BlackServer drops by about 3 GB during the window.",
+      "Peak memory on the main server drops by about 3 GB during the window.",
       "Restore drills stay identical: the archives keep the same names.",
-      "One new dependency: the WhiteServer to Google Drive link."
+      "One new dependency: the second server to cloud storage link."
     ],
     "sections": [
       {
         "heading": "Why change anything",
-        "body": "The crawlers and the backup runner both peak after midnight. On three nights last week the host fell below the 1 GB free margin[^margin], which is the line we never cross.\n\nWhiteServer has 128 GB and is idle at that hour."
+        "body": "The crawlers and the backup runner both peak after midnight. On three nights last week the host fell below the 1 GB free margin[^margin], which is the line we never cross.\n\nThe second server has 128 GB and is idle at that hour."
       },
       {
         "heading": "What moves and what stays",
-        "body": "| Piece | Today | After |\n|---|---|---|\n| Database dumps | BlackServer | WhiteServer |\n| File archives | BlackServer | WhiteServer |\n| Restore drill | BlackServer | BlackServer |\n\nThe restore drill stays on BlackServer on purpose, so a restore still proves the archive is readable from a second machine.",
+        "body": "| Piece | Today | After |\n|---|---|---|\n| Database dumps | main server | second server |\n| File archives | main server | second server |\n| Restore drill | main server | main server |\n\nThe restore drill stays on the main server on purpose, so a restore still proves the archive is readable from a second machine.",
         "callout": {"tone": "ok", "text": "No change for anyone who restores: the archive names and the drive folders stay the same."}
       },
       {
         "heading": "Risks",
-        "body": "- The WhiteServer upload link becomes part of the backup path.\n- A failed run is now reported from another host; the alert route must follow[^alerts].",
+        "body": "- The second server upload link becomes part of the backup path.\n- A failed run is now reported from another host; the alert route must follow[^alerts].",
         "callout": {"tone": "warn", "text": "Keep the old timer disabled, not deleted, for two weeks."}
       },
       {
         "heading": "Plan",
-        "body": "1. Copy the runner and its unit to WhiteServer.\n2. Run both in parallel for three nights and compare the archives.\n3. Disable the BlackServer timer."
+        "body": "1. Copy the runner and its unit to the second server.\n2. Run both in parallel for three nights and compare the archives.\n3. Disable the main server timer."
       }
     ],
     "footnotes": [
       {"id": "margin", "text": "Estate rule: keep at least 1 GB RAM and one thread free on every host."},
-      {"id": "alerts", "text": "The uptime monitor already runs on WhiteServer, so the alert stays local."}
+      {"id": "alerts", "text": "The uptime monitor already runs on the second server, so the alert stays local."}
     ]
   }
 }

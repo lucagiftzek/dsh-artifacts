@@ -4,13 +4,13 @@ A clean reading page: title, lead summary, key points box, sections with optiona
 automatic table of contents (3+ sections). Rendered by the artifact server (artifact-kit), so it has the
 DSH look, light and dark themes, print styles and live reload.
 
-Preview: https://llm.tzekos.eu/report/template-preview-report-text.html
+Preview: `artifact template-preview report-text` (publishes the example data as a page you can open).
 
 ## Use it
 
     artifact template-info report-text                 # fields and a minimal example
     artifact new my-memo --template report-text --data my-memo.json
-    # -> ~/reports/my-memo.md and https://llm.tzekos.eu/report/my-memo.html
+    # -> ~/reports/my-memo.md, served at <your DSH host>/report/my-memo.html
 
 Then edit `~/reports/my-memo.md` directly with the edit tool for small changes, or change the JSON and
 rerun with `--force` to regenerate the whole page.

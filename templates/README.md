@@ -1,4 +1,7 @@
-# Artifact templates
+# Artifact templates (bundled copy)
+
+This folder ships with dsh-artifacts, so every install has the templates. The example images and the short clip
+were generated for these examples and may be reused freely.
 
 Reusable artifact layouts, so a known kind of deliverable is not written again from scratch: an agent picks a
 template, writes only the data (JSON), and the `artifact` CLI validates it, fills the template and publishes it
@@ -16,12 +19,12 @@ for example `data.kpis[0].value: expected string or number, got object`; nothing
 
 | Template | Kind | What it is for | Preview |
 |---|---|---|---|
-| `report-text` | markdown | long-form document: summary, key points, sections, callouts, footnotes | [preview](https://llm.tzekos.eu/report/template-preview-report-text.html) |
-| `article` | markdown | article with hero photo, captioned figures, inline charts, pull quotes, sources | [preview](https://llm.tzekos.eu/report/template-preview-article.html) |
-| `dashboard` | markdown | KPI tiles, charts two per row, progress bars, sortable table | [preview](https://llm.tzekos.eu/report/template-preview-dashboard.html) |
-| `review-queue` | react | approve, edit or reject a list of items; hotkeys 1 approve, 3 reject, J and K | [preview](https://llm.tzekos.eu/report/template-preview-review-queue/) |
-| `video-explainer` | motion | animated explainer (title, bullets, stat, chart, quote, outro) to MP4 | [preview](https://llm.tzekos.eu/report/template-preview-video-explainer.html) |
-| `video-page` | react | player page for an existing MP4: chapters, marker bar, transcript, captions | [preview](https://llm.tzekos.eu/report/template-preview-video-page/) |
+| `report-text` | markdown | long-form document: summary, key points, sections, callouts, footnotes | `artifact template-preview report-text` |
+| `article` | markdown | article with hero photo, captioned figures, inline charts, pull quotes, sources | `artifact template-preview article` |
+| `dashboard` | markdown | KPI tiles, charts two per row, progress bars, sortable table | `artifact template-preview dashboard` |
+| `review-queue` | react | approve, edit or reject a list of items; hotkeys 1 approve, 3 reject, J and K | `artifact template-preview review-queue` |
+| `video-explainer` | motion | animated explainer (title, bullets, stat, chart, quote, outro) to MP4 | `artifact template-preview video-explainer` |
+| `video-page` | react | player page for an existing MP4: chapters, marker bar, transcript, captions | `artifact template-preview video-page` |
 
 ## Anatomy of a template
 
@@ -48,11 +51,11 @@ come from the data (or from the amount of text) and starts and the total are com
    says "Example data" where figures are illustrative) and a `README.md`.
 2. `artifact template-info <id>` and `artifact new t1 --template <id>` must work with the example; then
    `artifact template-preview <id>` and check the preview in a browser, light and dark, phone width.
-3. Commit here (estate repo on BlackServer) and refresh the copy bundled with dsh-artifacts:
-   `/opt/stacks/llm/plugins/dsh-artifacts/scripts/sync-templates.sh` (the plugin falls back to it when
-   `~/estate` is missing). Run the plugin tests: `node test/run.mjs` in the plugin folder.
+3. Keep your own library in a folder of your choice and point `$ARTIFACT_TEMPLATES` at it, or contribute the
+   template to this repository (`templates/<id>/`). If you keep a canonical library elsewhere, refresh this bundled
+   copy with `scripts/sync-templates.sh <your library>`. Run the plugin tests: `node test/run.mjs`.
 
-Search order: `$ARTIFACT_TEMPLATES` (colon separated), `~/estate/templates/artifacts`, then the bundled copy.
+Search order: `$ARTIFACT_TEMPLATES` (colon separated), then `~/estate/templates/artifacts` if it exists, then this bundled copy.
 
 Conventions: local libraries only (`/report/_lib/`), never a CDN; no secrets in data files (the CLI refuses
 credential-shaped strings); English only; no em dash, en dash or spaced hyphen in any text (the CLI warns).

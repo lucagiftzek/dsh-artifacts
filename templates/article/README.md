@@ -4,7 +4,7 @@ An editorial page: hero photo with caption and credit, a larger lead paragraph, 
 figures or a gallery grid, inline charts from data series, pull quotes, callouts and a numbered sources list.
 Rendered by artifact-kit (`template: article`, 780 px reading column, light and dark).
 
-Preview: https://llm.tzekos.eu/report/template-preview-article.html
+Preview: `artifact template-preview article` (publishes the example data as a page you can open).
 
 ## Use it
 

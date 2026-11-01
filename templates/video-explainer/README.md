@@ -4,7 +4,7 @@ A data-driven HyperFrames/GSAP composition on the dsh-motion pipeline. Scenes co
 bullets (one at a time), a counting stat, a bar chart with one highlighted bar, a quote, an outro. The
 animation code is generic (every element marked `data-in` enters in order), so a new video is only data.
 
-Preview (player page): https://llm.tzekos.eu/report/template-preview-video-explainer.html
+Preview (player page): `artifact template-preview video-explainer`.
 
 ## Use it
 
@@ -12,7 +12,7 @@ Preview (player page): https://llm.tzekos.eu/report/template-preview-video-expla
     artifact new q3-video --template video-explainer --data q3-video.json
     artifact motion check q3-video
     artifact motion snapshot q3-video --at 1.5,4,7     # look at the stills with read_image
-    artifact motion export q3-video                    # MP4 (host auto: BlackServer if >= 4 GB free, else WhiteServer)
+    artifact motion export q3-video                    # MP4 (rendered locally; see the dsh-motion skill for remote render hosts)
 
 Change the data and rerun with `--force` to rebuild the composition (the player page stays). Small timing or
 wording tweaks can also be made directly in `<name>.motion/index.html`. Follow the dsh-motion skill for the
