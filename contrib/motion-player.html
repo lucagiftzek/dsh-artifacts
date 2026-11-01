@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>__TITLE__ - motion</title>
+<script src="/report/_lib/hyperframes/player.js"></script>
+<style>
+  :root{--bg:#f7f5f2;--panel:#fff;--ink:#1c1a18;--muted:#6b645d;--line:#e3ddd6;--accent:#c1553a;color-scheme:light dark}
+  @media (prefers-color-scheme:dark){:root{--bg:#141210;--panel:#1c1917;--ink:#ece6df;--muted:#a39a90;--line:#2f2a26;--accent:#d8694c}}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,sans-serif}
+  main{max-width:1100px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  h1{font-size:20px;margin:0} .meta{color:var(--muted);font-size:13px}
+  .stage{background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+  hyperframes-player{display:block;width:100%;aspect-ratio:__W__/__H__;max-height:72vh}
+  .scenes{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+  .chip{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:3px 10px;font:inherit;font-size:13px;cursor:pointer}
+  .chip.on{border-color:var(--accent);color:var(--accent)}
+  .row{display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap}
+  input{flex:1;min-width:220px;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit}
+  button.act{padding:7px 12px;border:1px solid var(--accent);background:var(--panel);color:var(--accent);border-radius:6px;cursor:pointer;font:inherit}
+  button.primary{background:var(--accent);color:#fff}
+  .render video{width:100%;max-width:560px;border-radius:8px;border:1px solid var(--line);margin-top:6px}
+  .muted{color:var(--muted);font-size:13px}
+</style>
+</head>
+<body><main>
+  <header><h1>__TITLE__</h1><span class="meta" id="meta">__W__x__H__</span></header>
+  <div class="stage">
+    <hyperframes-player id="p" src="__NAME__.motion/index.html?player=1"
+      runtime-src="/report/_lib/hyperframes/runtime.js" controls></hyperframes-player>
+  </div>
+  <nav class="scenes" id="scenes"></nav>
+  <div class="row">
+    <input id="note" placeholder="Change something at this moment, e.g. 'hold this number longer' or 'bigger title'" />
+    <button class="act" id="send">Ask at <span id="t">0.0</span>s</button>
+  </div>
+  <div class="row">
+    <button class="act primary" id="export">Export MP4</button>
+    <button class="act" id="draft">Quick draft</button>
+    <span class="muted">Renders run on the server; the file appears below.</span>
+  </div>
+  <div class="render" id="render"></div>
+</main>
+<script>
+(function () {
+  var NAME = "__NAME__", SRC = NAME + ".motion/index.html";
+  var p = document.getElementById("p"), tEl = document.getElementById("t");
+  var scenes = [];
+  function now() { return Math.max(0, +(p.currentTime || 0)); }
+  function sceneAt(t) { var s = null; scenes.forEach(function (x) { if (t >= x.start - 1e-3) s = x; }); return s; }
+  function tick() {
+    var t = now(); tEl.textContent = t.toFixed(1);
+    var s = sceneAt(t);
+    document.querySelectorAll(".chip").forEach(function (c) { c.classList.toggle("on", !!s && c.dataset.id === s.id); });
+  }
+  p.addEventListener("timeupdate", tick); setInterval(tick, 250);
+
+  function loadScenes() {
+    fetch(SRC + "?player=1", { cache: "no-store", credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (html) {
+      var doc = new DOMParser().parseFromString(html, "text/html");
+      var root = doc.querySelector("[data-composition-id]");
+      if (!root) return;
+      document.getElementById("meta").textContent = root.getAttribute("data-width") + "x" + root.getAttribute("data-height") +
+        " · " + (root.getAttribute("data-duration") || "?") + " s";
+      scenes = [].slice.call(root.querySelectorAll(":scope > [data-start]")).map(function (el) {
+        return { id: el.id, start: +el.getAttribute("data-start") || 0, label: el.getAttribute("data-label") || el.id || "scene" };
+      }).sort(function (a, b) { return a.start - b.start; });
+      var nav = document.getElementById("scenes"); nav.innerHTML = "";
+      scenes.forEach(function (s) {
+        var b = document.createElement("button"); b.className = "chip"; b.dataset.id = s.id;
+        b.textContent = s.label + " · " + s.start.toFixed(1) + "s";
+        b.onclick = function () { p.seek(s.start + 0.01); tick(); };
+        nav.appendChild(b);
+      });
+    }).catch(function () {});
+  }
+  loadScenes();
+
+  // Live reload: when the composition changes on disk, reload it and keep the playhead.
+  var etag = null;
+  setInterval(function () {
+    if (document.hidden) return;
+    fetch(SRC + "?artifact-etag=1", { cache: "no-store", credentials: "same-origin" }).then(function (r) { return r.text(); }).then(function (t) {
+      t = t.trim(); if (!t || t.charAt(0) !== '"') return;
+      if (etag && t !== etag) {
+        var at = now();
+        p.addEventListener("ready", function () { try { p.seek(at); } catch (e) {} }, { once: true });
+        p.setAttribute("src", SRC + "?player=1&v=" + encodeURIComponent(t));
+        loadScenes();
+      }
+      etag = t;
+    }).catch(function () {});
+  }, 2000);
+
+  function say(text) { if (window.dsh && dsh.send) dsh.send(text); else alert(text); }
+  document.getElementById("send").onclick = function () {
+    var note = document.getElementById("note").value.trim(); if (!note) return;
+    var t = now(), s = sceneAt(t);
+    say("[motion " + NAME + " @ " + t.toFixed(1) + "s" + (s ? ", scene \"" + s.label + "\" (#" + s.id + ")" : "") + "] " + note);
+    document.getElementById("note").value = "";
+  };
+  document.getElementById("note").addEventListener("keydown", function (e) { if (e.key === "Enter") document.getElementById("send").click(); });
+  document.getElementById("export").onclick = function () { say("Export the motion artifact " + NAME + " to MP4 (artifact motion export " + NAME + ")."); };
+  document.getElementById("draft").onclick = function () { say("Render a quick draft of motion artifact " + NAME + " (artifact motion export " + NAME + " --quality draft)."); };
+
+  function showRender(r) {
+    var box = document.getElementById("render");
+    if (!r || !r.url) { box.innerHTML = ""; return; }
+    var v = "?v=" + (r.stamp || "");
+    var isVid = /\.(mp4|webm)$/i.test(r.url);
+    box.innerHTML = "<div class='muted'>Latest render: <a href='" + r.url + "' download>" + r.file + "</a> · " +
+      (r.quality || "") + " · " + (r.size_kb || "?") + " KB · " + (r.when || "") + "</div>" +
+      (isVid ? "<video controls preload='metadata' src='" + r.url + v + "'></video>" :
+               "<img style='max-width:560px' src='" + r.url + v + "'>");
+  }
+  if (window.dsh && dsh.storage) { dsh.storage.get("render").then(showRender); dsh.storage.watch("render", showRender); }
+})();
+</script>
+</body>
+</html>

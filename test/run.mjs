@@ -9,6 +9,7 @@ const suites = [
   ['python3', [resolve(here, 'test_server.py')]],
   ['python3', [resolve(here, 'test_artifact_kit.py')]],
   ['python3', [resolve(here, 'test_templates.py')]],
+  [process.execPath, [resolve(here, 'parity.mjs')]],
 ]
 for (const [cmd, args] of suites) {
   console.log('\n===== ' + args[0].split('/').pop() + ' =====')
