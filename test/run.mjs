@@ -7,10 +7,12 @@ let fail = 0
 const suites = [
   [process.execPath, [resolve(here, 'client.mjs')]],
   ['python3', [resolve(here, 'test_server.py')]],
+  ['python3', [resolve(here, 'test_media.py')]],
   ['python3', [resolve(here, 'test_artifact_kit.py')]],
   ['python3', [resolve(here, 'test_templates.py')]],
   [process.execPath, [resolve(here, 'engine.mjs')]],
   [process.execPath, [resolve(here, 'tools.mjs')]],
+  [process.execPath, [resolve(here, 'listing.mjs')]],
   [process.execPath, [resolve(here, 'parity.mjs')]],
 ]
 for (const [cmd, args] of suites) {

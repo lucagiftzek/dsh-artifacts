@@ -1,5 +1,5 @@
 /**
- * Build the node half's TypeScript (src/engine/*.ts, src/tools.ts) into lib/, one JavaScript file per source
+ * Build the node half's TypeScript (src/engine/*.ts, src/tools.ts, src/listing.ts, src/listing-cli.ts) into lib/, one JavaScript file per source
  * file, no bundling: lib/engine/*.js and lib/tools.js are committed, so installs need no build step and no
  * TypeScript. Type checking is separate: `tsc -p tsconfig.json` (needs @types/node).
  *
@@ -21,5 +21,5 @@ const { build } = esbuild.default && esbuild.default.build ? esbuild.default : e
 const engine = readdirSync(join(ROOT, 'src', 'engine')).filter((f) => f.endsWith('.ts')).map((f) => join(ROOT, 'src', 'engine', f))
 const common = { bundle: false, format: 'esm', platform: 'node', target: 'node20', sourcemap: false, logLevel: 'warning', legalComments: 'inline' }
 await build({ ...common, entryPoints: engine, outdir: join(ROOT, 'lib', 'engine') })
-await build({ ...common, entryPoints: [join(ROOT, 'src', 'tools.ts')], outdir: join(ROOT, 'lib') })
-console.log('built lib/engine/*.js and lib/tools.js from src/')
+await build({ ...common, entryPoints: ['tools.ts', 'listing.ts', 'listing-cli.ts'].map((f) => join(ROOT, 'src', f)), outdir: join(ROOT, 'lib') })
+console.log('built lib/engine/*.js, lib/tools.js, lib/listing.js and lib/listing-cli.js from src/')

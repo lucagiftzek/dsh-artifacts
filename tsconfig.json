@@ -11,5 +11,5 @@
     "types": ["node"],
     "lib": ["ES2022", "ES2021.String"]
   },
-  "include": ["src/engine/**/*.ts", "src/tools.ts"]
+  "include": ["src/engine/**/*.ts", "src/tools.ts", "src/listing.ts", "src/listing-cli.ts"]
 }

@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.2.0 (2026-11-02)
+
+Media and plain files as first-class artifacts, listing control for agents, direct downloads everywhere.
+
+- **Enclosure page** for images, video, audio, PDF, data, code and plain files: the artifact-kit theme, the right
+  viewer (players with seeking, poster and waveform, PDF viewer, CSV/JSON tables, text heads, archive entries,
+  .docx text, .xlsx rows), a details card (sha256, duration, dimensions, codecs), Download, version history.
+  Browser navigations get the page, embeds get the bytes; `?view=1` / `?raw=1` force either.
+- **Downloads**: `?download=1` and `<name>/download` on every file (attachment, original name, RFC 5987), Markdown
+  as `.md` and as the rendered `.html`, old versions with `_api/raw?...&download=1`, the same on public pages.
+  Download icon per row and download buttons in the tab. No `<a download>` anywhere (service workers such as
+  dsh-seal never see those requests).
+- **Listing control**: agent tools `artifact_list`, `artifact_add` (copy or hardlink any file into the folder,
+  attach it to the calling chat, title and description), `artifact_remove` (de-list, reversible, nothing deleted),
+  `artifact_update`; CLI `artifact add|remove|relist|retitle`, `artifact list --json --hidden --kind`. State in
+  `.artifacts/listing.jsonl` (append only, shared by the proxy module and the node half). Tab: de-list button and
+  a Hidden filter. The TypeScript index (`src/listing.ts`) is checked against the Python server by `test/listing.mjs`.
+- **Serving**: one byte path for every file with Range, If-Range, ETag/304 and 416; `nosniff` also on 206 and
+  streamed answers; raw SVG and XML (and HTML listed from outside the folder unless `trusted`) carry a sandbox CSP;
+  plain files always download. Many more types on the closed allowlist (zip, tar, gz, 7z, Office, ODF, epub,
+  parquet, jsonl, mkv, ...); they appear in the tab like any artifact.
+- **Thumbnails**: WebP from ffmpeg (images, video poster, audio waveform) and pdftoppm (PDF), cached per file
+  version, two at a time, niced, with timeouts; `ARTIFACT_THUMBS=0` turns them off.
+- **Versions** also for small media and files (same 1.5 MB limit as text).
+- New error codes `ARTIFACT_NOT_FOUND`, `ARTIFACT_AMBIGUOUS`, `ARTIFACT_ARGS_INVALID`, `ARTIFACT_SOURCE_INVALID`,
+  `ARTIFACT_TYPE_UNSUPPORTED`, `ARTIFACT_FILE_TOO_LARGE`, `ARTIFACT_LINK_FAILED`; troubleshooting sections 7 to 9.
+- Upgrade: the browser half reloads by itself and degrades against a 2.1 server (no thumbnails, old players);
+  the tools need a `dsh web` restart and the server half a restart of the proxy that imports it.
+
 ## 2.1.0 (2026-11-01)
 
 Templates for every agent on every install, and agents can create templates.

@@ -1,6 +1,6 @@
 ---
 name: publish-artifact
-description: Publish a deliverable (report, dashboard, plan, comparison, doc, interactive tool, mini web app, media) as an artifact in ~/reports/ that opens in the Artifacts sidebar tab and at https://dsh.example.com/report/<name>. Covers the cheap Markdown path, React/HTML apps, two-way interaction with the chat, versions/undo, and image/audio/video generation. Load it whenever the deliverable is more than a one-screen answer.
+description: Publish a deliverable (report, dashboard, plan, comparison, doc, interactive tool, mini web app, media) as an artifact in ~/reports/ that opens in the Artifacts sidebar tab and at https://dsh.example.com/report/<name>. Covers the cheap Markdown path, React/HTML apps, listing any file you produced (images, video, audio, PDF, CSV, zip, Office files) with a viewer page and direct download, de-listing, two-way interaction with the chat, versions/undo, and image/audio/video generation. Load it whenever the deliverable is more than a one-screen answer.
 ---
 
 # Publishing artifacts (dsh-artifacts v2)
@@ -48,6 +48,35 @@ plugin's templates/ folder (first match per id wins).
   template.md (markdown), index.html + app.jsx (react) or composition.html (motion). It is validated (schema,
   example, trial render, no secrets, size limits), written to the user library and listed at once.
 
+## 0b. Files you produced: list them, do not describe them
+
+Any file you made (a chart PNG, a rendered MP4, a recording, a PDF, a CSV export, a zip, a .docx or .xlsx) can be
+an artifact. It opens in a themed page with the right viewer (image; video and audio players with seeking, poster
+and waveform; PDF viewer; CSV/JSON as a table; first lines of text and code; entry list of archives and Office
+files; size, type and sha256 for everything), a Download button and the version history.
+
+    artifact_add({ path, title?, description?, slug?, mode? })   # copy (or mode "link": hardlink) into ~/reports,
+                                                                # attached to this chat; returns url, download_url
+    artifact_list({ scope?: "chat"|"all", kind?, query?, include_hidden? })   # what the tab lists, with URLs
+    artifact_remove({ name })        # de-list: hidden from the tab, the file, versions and links stay
+    artifact_add({ name })           # list a de-listed artifact again
+    artifact_update({ name, title?, description? })   # title / description in the tab and on the page
+
+CLI: `artifact add <file> [--name slug] [--title t] [--link]`, `artifact remove <name>`, `artifact relist <name>`,
+`artifact retitle <name> --title t`, `artifact list --json [--hidden] [--kind video]`.
+
+- A file written straight into ~/reports is listed automatically; `artifact_add` is for files elsewhere (and to
+  set a title). Text files with a credential-shaped string are refused; HTML from outside ~/reports is served
+  sandboxed (no script) unless `trusted: true`.
+- De-list drafts, scratch files and superseded versions instead of leaving them in the user's list.
+- Links: give the user `url` (`/report/<file>`, the viewer page). Direct download: `<url>?download=1` or
+  `<url>/download` (original bytes and name); Markdown has both `<name>.md?download=1` (source) and
+  `<name>.html?download=1` (rendered page). Embeds (`<img>`, `<video>`, fetch) get the bytes; `?raw=1` forces
+  the bytes in a browser tab.
+- Types: png jpg webp gif avif bmp svg (SVG only ever as an image), mp4 webm mov mkv, mp3 m4a ogg opus wav flac,
+  pdf, csv tsv json jsonl txt log and code, zip tar gz 7z, docx xlsx pptx odt ods epub and more; anything else is
+  refused with the list.
+
 ## 1 - Pick the cheapest form that does the job
 
 | Need | Write | URL |
@@ -57,6 +86,7 @@ plugin's templates/ folder (first match per id wins).
 | custom single page, visual, tool | ~/reports/<name>.html | /report/<name>.html |
 | real web app (state, components) | artifact new <name> --type react | /report/<name>/ |
 | image / speech / video file | artifact media ... | /report/media/<file> |
+| a file you produced elsewhere | artifact_add({ path }) | /report/<file> |
 
 **Markdown is the default.** The server renders it on the fly with artifact-kit
 (themed, light/dark, responsive). There is no render step: write the .md, link
@@ -139,8 +169,9 @@ Mistral (subscription). BytePlus Seedream/Seedance are not available
 ## 7 - Housekeeping
 
 - artifact list, artifact show <name>, artifact versions|diff|restore <name> -
-  every change is snapshotted (40 per file); the sidebar has the same history
-  with Preview / Source / Changes.
+  every change is snapshotted (40 per file, text and small media up to 1.5 MB);
+  the sidebar has the same history with Preview / Source / Changes.
+- Public no-login pages offer the download too (/report-public/<name>?download=1).
 - Public no-login link: artifact public <name> on -> /report-public/<name>.
   Re-check for secrets and private data first.
 - Name files after the thing (q3-margin-analysis.md), not the session or date.

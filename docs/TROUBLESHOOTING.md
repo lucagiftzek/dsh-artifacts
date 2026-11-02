@@ -1,6 +1,6 @@
-# Troubleshooting dsh-artifacts: templates and agent tools
+# Troubleshooting dsh-artifacts: templates, listing, media and agent tools
 
-Checked on: DSH 0.1.5-rc.1 and 0.2.1-rc.5, plugin 2.1.0.
+Checked on: DSH 0.1.5-rc.1, 0.2.1-rc.5 and 0.2.1, plugin 2.2.0.
 
 <a id="start-here"></a>
 **Start here.** Every failed tool result carries a `code`; look it up in [ERRORS.md](ERRORS.md). Collect the
@@ -15,6 +15,9 @@ facts in section 0 first: they are read-only and safe.
 | 4 | `artifact_template_save` refuses the template | schema, example, files or limits | [4](#t-save-refused) |
 | 5 | The `artifact` CLI says the engine needs Node.js | node is not on PATH | [5](#t-cli-node) |
 | 6 | The skill publish-artifact is not offered | a user copy wins, or the node half is not loaded | [6](#t-skill-missing) |
+| 7 | `artifact_add` / `artifact_remove` refused, or a de-listed artifact still shows | wrong name or type; the server half (the proxy module) not reloaded | [7](#t-listing) |
+| 8 | Media opens as raw bytes, no thumbnails, no download icons | the server module of 2.1 still runs (proxy not restarted), or ffmpeg missing | [8](#t-media) |
+| 9 | A download or video seeking fails behind a proxy or service worker | Range or Content-Disposition stripped on the way | [9](#t-download) |
 
 ## 0. Collect facts (read-only, always safe)
 
@@ -130,6 +133,42 @@ The template commands of the CLI run the same TypeScript engine as the tools (`l
 **Fix**: refresh or delete the user copy (`cp -r "$P/skills/publish-artifact" ~/.dsh/skills/`); for cause 2 see section 1.
 
 **Verify**: a new chat offers the skill and its section 0 names the `artifact_*` tools.
+
+<a id="t-listing"></a>
+## 7. Listing and de-listing
+
+**Likely causes**
+1. The name does not match (ARTIFACT_NOT_FOUND) or matches two files (ARTIFACT_AMBIGUOUS): use a `name` from `artifact_list({ include_hidden: true })`, with its extension.
+2. The type is not on the allowlist (ARTIFACT_TYPE_UNSUPPORTED): zip it or convert it.
+3. De-listed but still in the tab: the tools write `~/reports/.artifacts/listing.jsonl` at once, but the tab reads the index from the server module, which loads the 2.2 code only when its host (the reverse proxy that imports `server/artifacts_server.py`) restarts.
+
+**Fix**: for 3, restart the proxy that serves `/report/` **[HUMAN]**. Nothing is lost meanwhile: the listing file is append only and is read by the new code.
+
+**Verify**: `artifact list --json --hidden` shows `listed: false`; `curl -s "$URL/report/_api/index" | jq .hidden` counts it.
+
+<a id="t-media"></a>
+## 8. Media and files open as raw bytes, no thumbnails or download icons
+
+**Likely causes**
+1. The 2.1 server module still runs (no `view`, `download`, `thumb` fields in `/report/_api/index`).
+2. `ffmpeg`, `ffprobe` (video, audio, images) or `pdftoppm` (PDF) are not installed: no thumbnail, no duration, the kind icon shows instead.
+3. `ARTIFACT_THUMBS=0` in the environment of the proxy.
+
+**Fix**: 1, restart the proxy **[HUMAN]**; 2, install ffmpeg and poppler-utils; failed thumbnails are remembered per file version in `.artifacts/thumbs/*.fail` (delete them to retry).
+
+**Verify**: `curl -s -o /dev/null -w '%{http_code} %{content_type}\n' "$URL/report/<video>?thumb=1"` answers `200 image/webp`.
+
+<a id="t-download"></a>
+## 9. Downloads or video seeking fail behind a proxy or a service worker
+
+**Likely causes**
+1. A proxy drops `Range` or answers 200 for range requests: video seeking jumps back to 0.
+2. Something strips `Content-Disposition`: the download opens inline.
+3. A page uses `<a download>`: Chrome sends those requests straight to the network, past any service worker (for example dsh-seal), so they travel outside the worker. The plugin never uses the attribute: downloads are plain navigations (or a hidden iframe in the tab) to `?download=1`, which every worker sees.
+
+**Fix**: check each hop with `curl -s -D - -o /dev/null -H 'Range: bytes=0-99' "$URL/report/<video>?raw=1"` (expect 206 and `Content-Range`) and `curl -s -D - -o /dev/null "$URL/report/<file>/download"` (expect `Content-Disposition: attachment`).
+
+**Verify**: in the browser, seek a video in its page; a download from the Artifacts tab saves the original bytes under the original name.
 
 ## Common install problems on DSH
 

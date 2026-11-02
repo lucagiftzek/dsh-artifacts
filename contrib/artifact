@@ -25,8 +25,19 @@ CREATE
   artifact url <name>                print the URL (md -> its rendered .html)
   artifact render <x.md>             write the .html next to the .md (optional: it renders on the fly)
 
+LIST / DE-LIST (also agent tools artifact_list, artifact_add, artifact_remove, artifact_update)
+  artifact add <file> [--name slug] [--title "..."] [--description "..."] [--link] [--force] [--json]
+                                     list a file you produced (image, video, audio, PDF, CSV, zip, docx...):
+                                     copied (or hardlinked with --link) into ~/reports, attached to this chat
+  artifact remove <name> [--json]    de-list: hidden from the tab, the file and its versions stay
+  artifact relist <name>             list a de-listed artifact again
+  artifact retitle <name> [--title "..."] [--description "..."]   title shown in the tab and on the page
+  artifact list [--all] [-n 20] [--kind K] [--hidden] [--json]   this chat's artifacts (or all); --json adds
+                                     url, view_url, download_url, path (K: doc page app image audio video
+                                     pdf data code file media)
+  Downloads: <url>?download=1 or <url>/download (original bytes, Markdown: x.md and x.html).
+
 INSPECT / UNDO
-  artifact list [--all] [-n 20]      this chat's artifacts (or all)
   artifact show <name>               url, source file, versions, storage, public state
   artifact versions <name>           automatic snapshots (every change is kept, 40 per file)
   artifact diff <name> [A] [B]       unified diff between snapshots (default: last change)
@@ -96,6 +107,14 @@ def flag(args, name, default=None):
         del args[i]
         return True
     return default
+
+
+def bflag(args, name):
+    """A boolean switch: removed from args, never takes a value."""
+    if name in args:
+        args.remove(name)
+        return True
+    return False
 
 
 def rel_of(name):
@@ -500,7 +519,103 @@ def ago(ts):
     return "%ds" % s if s < 60 else "%dm" % (s // 60) if s < 3600 else "%dh" % (s // 3600) if s < 86400 else "%dd" % (s // 86400)
 
 
+LISTING = PLUGIN / "lib" / "listing-cli.js"
+
+
+def _listing(cmd, payload, as_json):
+    """Run a listing command in the node half (lib/listing-cli.js, shared with the agent tools)."""
+    import shutil
+    node = os.environ.get("ARTIFACT_NODE") or shutil.which("node")
+    if not node:
+        die("listing commands need Node.js: put node on PATH or set ARTIFACT_NODE")
+    try:
+        r = subprocess.run([node, str(LISTING), cmd], capture_output=True, text=True, timeout=600,
+                           input=json.dumps(payload, ensure_ascii=False))
+    except (OSError, subprocess.TimeoutExpired) as e:
+        die("listing command did not run: %s" % e)
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        die("listing command failed: %s" % ((r.stderr or r.stdout).strip()[-2000:] or "no output"))
+    if as_json:
+        print(json.dumps(d, ensure_ascii=False, indent=2))
+        sys.exit(r.returncode)
+    if not d.get("ok"):
+        msg = d.get("message") or d.get("error") or "failed"
+        extra = ""
+        if d.get("candidates"):
+            extra = "\n  candidates: " + ", ".join(d["candidates"])
+        if d.get("hint"):
+            extra += "\n  hint: " + d["hint"]
+        print("%s: %s%s" % (d.get("code", "ARTIFACT_INTERNAL"), msg, extra), file=sys.stderr)
+        sys.exit(r.returncode or 1)
+    return d
+
+
+def _opt(args, name):
+    v = flag(args, name, None)
+    return v if v not in (None, True) else None
+
+
+def cmd_add(args):
+    as_json = bflag(args, "--json")
+    payload = {"mode": "link" if bflag(args, "--link") else "copy", "force": bflag(args, "--force")}
+    for f, k in (("--name", "slug"), ("--title", "title"), ("--description", "description")):
+        v = _opt(args, f)
+        if v is not None:
+            payload[k] = v
+    if not args:
+        die("usage: artifact add <file> [--name slug] [--title t] [--description d] [--link] [--force]")
+    payload["path"] = os.path.abspath(os.path.expanduser(args[0]))
+    d = _listing("add", payload, as_json)
+    print("%s: %s\nurl:      %s\ndownload: %s\npath:     %s" % (d.get("action"), d["name"], d["url"], d.get("download_url", ""), d["path"]))
+
+
+def cmd_relist(args):
+    as_json = bflag(args, "--json")
+    if not args:
+        die("usage: artifact relist <name>")
+    d = _listing("add", {"name": args[0]}, as_json)
+    print("%s: %s\nurl: %s" % (d.get("action"), d["name"], d["url"]))
+
+
+def cmd_remove(args):
+    as_json = bflag(args, "--json")
+    if not args:
+        die("usage: artifact remove <name>")
+    d = _listing("remove", {"name": args[0]}, as_json)
+    print("de-listed: %s (file kept: %s; artifact relist %s lists it again)" % (d["name"], d["file_kept"], d["name"]))
+
+
+def cmd_retitle(args):
+    as_json = bflag(args, "--json")
+    payload = {}
+    for f, k in (("--title", "title"), ("--description", "description")):
+        v = flag(args, f, None)
+        if v is not None:
+            payload[k] = "" if v is True else v
+    if not args:
+        die("usage: artifact retitle <name> [--title t] [--description d]")
+    payload["name"] = args[0]
+    d = _listing("update", payload, as_json)
+    print("%s: %s" % (d["name"], d.get("title") or "(no title)"))
+
+
 def cmd_list(args):
+    as_json, hidden, kind = bflag(args, "--json"), bflag(args, "--hidden"), _opt(args, "--kind")
+    if as_json or hidden or kind:
+        allf = bflag(args, "--all")
+        payload = {"limit": int(flag(args, "-n", 50)), "include_hidden": hidden}
+        if kind:
+            payload["kind"] = kind
+        if SESSION and not allf:
+            payload.update(scope="chat", session=SESSION)
+        d = _listing("list", payload, as_json)
+        for it in d["items"]:
+            print("%-6s %-48s %s%s" % (it["kind"], it["name"][:48], "" if it["listed"] else "[hidden] ", it.get("url")))
+        if not d["items"]:
+            print("(none)")
+        return
     n = int(flag(args, "-n", 20))
     allf = flag(args, "--all", False)
     idx = S.build_index(SESSION if SESSION and not allf else None)
@@ -773,7 +888,8 @@ def main(argv):
              "public": cmd_public, "media": cmd_media, "libs": cmd_libs, "motion": cmd_motion,
              "export": lambda a: cmd_motion(["export"] + a),
              "templates": cmd_templates, "template-info": cmd_template_info,
-             "template-preview": cmd_template_preview, "template-save": cmd_template_save}
+             "template-preview": cmd_template_preview, "template-save": cmd_template_save,
+             "add": cmd_add, "remove": cmd_remove, "rm": cmd_remove, "relist": cmd_relist, "retitle": cmd_retitle}
     if cmd not in table:
         die("unknown command %s (artifact help)" % cmd)
     table[cmd](args)

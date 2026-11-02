@@ -31,16 +31,16 @@ the chat, version history, and image / speech / video generation.
 
 | Part | Path | Role |
 |---|---|---|
-| Sidebar tab | src/client.jsx → lib/client.js | list (This chat / All, search, kinds), detail with Preview / Source / Changes, version arrows + restore, pick-and-ask, "Fix with agent", public toggle, trash, inbox banner; chat links to ~/reports/* open here rendered |
-| Server module | server/artifacts_server.py | imported by your DSH reverse proxy; owns /report/ and /report-public/ |
+| Sidebar tab | src/client.jsx → lib/client.js | list (This chat / All, search, kinds, Hidden) with thumbnails and a download icon per row, detail with Preview / Source / Changes, the media and file viewer page, downloads, version arrows + restore, pick-and-ask, "Fix with agent", public toggle, de-list, trash, inbox banner; chat links to ~/reports/* open here rendered |
+| Server module | server/artifacts_server.py, files.py, viewer.py | imported by your DSH reverse proxy; owns /report/ and /report-public/: rendering, the enclosure page for media and files, downloads, Range, thumbnails, listing state |
 | Indexer | server/indexer.py | niced child process: incremental transcript attribution + version snapshots |
 | Bridge | server/bridge.js | injected into every served HTML page: window.dsh, Claude/OpenAI aliases, live reload |
 | Media + AI | server/media.py | Mistral (Vibe subscription) chat + FLUX images, Voxtral TTS/STT, DashScope, local ComfyUI, Gemini video (opt-in) |
 | Kit | contrib/artifact-kit | Markdown → themed HTML (kpi, charts, callouts, timeline, progress, columns, details, mermaid, math, actions, forms, media, figures, pull quotes, lead, footnotes; templates report, dashboard, plan, comparison, brief, article) |
-| CLI | contrib/artifact | the agent interface: new, list, show, versions, diff, restore, inbox, state, state-set, public, media, libs, motion, export |
+| CLI | contrib/artifact | the agent interface: new, list, add, remove, relist, retitle, show, versions, diff, restore, inbox, state, state-set, public, media, libs, motion, export |
 | Motion | contrib/motion.py + motion/ (npm: hyperframes) | animated explainers as code: `artifact new X --type motion` scaffolds X.html (player: scrubber, scene chips, timed change requests, export buttons, latest render) + X.motion/index.html (HyperFrames composition, one paused GSAP timeline); `artifact motion check/snapshot/voice/export`; renders locally or on a remote host over ssh+rsync (DSH_MOTION_REMOTE_HOSTS) |
 | Templates | src/engine/*.ts → lib/engine/ + templates/ (scripts/sync-templates.sh) | reusable layouts, see [Templates](#templates): agent tools `artifact_templates`, `artifact_template_info`, `artifact_from_template`, `artifact_template_save` and the same in the CLI (JSON Schema validation, assets copied, lossless JSON output) |
-| Agent tools + skill | lib/index.js → lib/tools.js (src/tools.ts) | registered by the node half at start with guarded dynamic imports; the packaged skill publish-artifact is registered with the host skill registry |
+| Agent tools + skill | lib/index.js → lib/tools.js, lib/listing.js (src/*.ts) | registered by the node half at start with guarded dynamic imports: the four template tools and `artifact_list`, `artifact_add`, `artifact_remove`, `artifact_update`; the packaged skill publish-artifact is registered with the host skill registry |
 | Library shelf | vendor/ (scripts/vendor.sh) | React, ReactDOM, Babel, Recharts, Tailwind, preact-htm, Chart.js, d3, three, mermaid, KaTeX, lucide, marked, PapaParse, Leaflet, GSAP (+ plugins under gsap/), HyperFrames player/runtime at /report/_lib/ |
 | Skill | skills/publish-artifact/SKILL.md | how agents should use all of the above (registered automatically; a copy in ~/.dsh/skills wins) |
 
@@ -117,6 +117,47 @@ keeps zero static imports: it loads the skill helper, the tools and the host's `
 guarded dynamic imports and registers through runtime `ctx.inject`, so a missing tools package costs one log line
 and never the plugin load.
 
+## Listing, media and downloads (2.2)
+
+Every file in the artifacts folder is listed in the Artifacts tab, and now that includes media and plain files:
+images (png, jpg, webp, gif, avif, bmp, svg), video (mp4, webm, mov, mkv), audio (mp3, m4a, ogg, opus, wav, flac),
+PDF, data and text (csv, tsv, json, jsonl, txt, log, code) and files (zip, tar, gz, 7z, docx, xlsx, pptx, odt, ods,
+epub, parquet and more; the list is closed, see `TYPES` in `server/artifacts_server.py`).
+
+- **Enclosure.** A media or file artifact opens in a page with the same theme as a Markdown artifact: title,
+  description, size and type, the right viewer (image, video and audio players with seeking, poster and waveform,
+  the browser's PDF viewer, CSV and JSON as a table, the first lines of text and code, the entries of archives,
+  the text of a .docx and the first rows of an .xlsx), a details card with sha256 and media facts, a Download
+  button and the version history with a download per version. The tab shows it in the Preview pane, with a
+  thumbnail per row (generated on the server with ffmpeg and pdftoppm, cached under `.artifacts/thumbs/`).
+- **Which URL gives what.** `/report/<file>` opened in a browser tab is the viewer page; an `<img>`, `<video>`,
+  `<audio>` or fetch gets the bytes; `?view=1` and `?raw=1` force one or the other. Range requests (seeking),
+  `ETag`, `If-Range`, `304` and `416` are supported on every file.
+- **Direct download.** `<url>?download=1` or `<url>/download`: `Content-Disposition: attachment` with the
+  original name (RFC 5987 for non-ASCII). Markdown has both `<name>.md?download=1` (source) and
+  `<name>.html?download=1` (the rendered page); its page footer links both. Older versions:
+  `/report/_api/raw?name=<file>&v=<id>&download=1`. Public artifacts offer the same under `/report-public/`.
+- **Listing control.** Agents list a file they produced anywhere with `artifact_add({ path })` (copied, or
+  hardlinked with `mode: "link"`, attached to the calling chat, optional `title` and `description`), de-list with
+  `artifact_remove({ name })` (hidden from the tab, nothing deleted, reversible with `artifact_add({ name })`),
+  rename the shown title with `artifact_update`, and read the list with `artifact_list` (filter by chat, kind,
+  text; every item has `url`, `view_url`, `download_url`, `path`). The CLI does the same: `artifact add`,
+  `artifact remove`, `artifact relist`, `artifact retitle`, `artifact list --json [--hidden] [--kind K]`. The
+  tab has a de-list button and a Hidden filter. The state lives on the server in `.artifacts/listing.jsonl`
+  (append only, per user, survives restarts); files written into the folder still appear by themselves.
+- **Safety.** `X-Content-Type-Options: nosniff` on every response. SVG is shown only as an image, and raw SVG and
+  XML carry `Content-Security-Policy: sandbox; default-src 'none'`, so a navigation to them cannot run script on
+  the GUI origin; HTML listed from outside the folder is sandboxed the same way unless the agent passes
+  `trusted: true`. Plain files (zip, Office, ...) are always sent as downloads. Text files with a
+  credential-shaped string are refused by `artifact_add`.
+- **Service workers (dsh-seal).** Downloads are plain navigations to `?download=1` (a hidden iframe in the tab),
+  never `<a download>`: Chrome sends `<a download>` requests past the service worker, which would take them out of
+  a sealed channel. Verified through a dsh-seal test instance: every viewer, seek (206) and download sealed.
+- **Settings** (environment of the proxy and of `dsh web`): `ARTIFACT_MAX_ADD_MB` (largest file `artifact_add`
+  takes, default 4096), `ARTIFACT_PREVIEW_KB` (text read for previews, default 512), `ARTIFACT_PREVIEW_ROWS` (200),
+  `ARTIFACT_HASH_MAX_MB` (sha256 shown up to this size, default 1024), `ARTIFACT_THUMB_MAX_MB` (200),
+  `ARTIFACT_THUMBS=0` (no thumbnails).
+
 ## When something goes wrong
 
 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) (symptom to fix) and [docs/ERRORS.md](docs/ERRORS.md) (every
@@ -135,17 +176,19 @@ dsh:picked, dsh:compose, dsh:sent, dsh:session, dsh:highlight.
 
 ## HTTP API (/report/_api/, same auth as /report/; writes need X-Artifact-Api: 1)
 
-index?session= · info?name= · raw?name=&v= · diff?name=&a=&b= · restore · public ·
+index?session=[&hidden=1] · info?name= · raw?name=&v=[&download=1] · diff?name=&a=&b= · restore · public ·
 trash · storage (GET ?name=&key= | ?list= ; POST {name,key,value|delete}) · send
 {name,session,text,mode} · error · inbox (GET ?session= ; POST {clear}) · claim ·
-ai · media {kind:image|tts|stt|video} · job?id= · capabilities.
+ai · media {kind:image|tts|stt|video} · job?id= · capabilities · listing {name, op: hide|show|meta, title, description}.
+On any file: `?view=1`, `?raw=1`, `?download=1` (or `/download`), `?thumb=1`.
 /report/?list=1 keeps the v1 shape (items[].name/url/ext/size/mtime/mine).
 
 ## Storage layout (~/reports/.artifacts/, never served)
 
 registry.json (indexer claims + session parents) · claims.jsonl (explicit claims) ·
 cursors.json · versions/<quoted name>/<mtime_ns> (40 per file) · snapmeta.json ·
-state/<name>.json · inbox/<session>.jsonl · trash/ · media-state.json · indexer.log
+state/<name>.json · inbox/<session>.jsonl · trash/ · media-state.json · indexer.log ·
+listing.jsonl (listed, de-listed, titles) · thumbs/ (WebP thumbnails, per file version)
 
 ## Install / operate
 

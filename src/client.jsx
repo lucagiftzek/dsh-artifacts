@@ -12,6 +12,10 @@
  *   view  -> iframe /report/<name>?dsh_session=  (bridge injected server-side)
  *   source/changes -> /report/_api/raw, /report/_api/diff
  *   actions -> restore, public, trash, send (into this chat), inbox
+ *   2.2: media and files preview in the server's enclosure page (<url>?view=1), thumbnails (<url>?thumb=1),
+ *        downloads (<url>?download=1, Markdown: .md and .html), de-list / list again (/report/_api/listing),
+ *        a "Hidden" filter (index?hidden=1). Against an older server these degrade: no thumb (kind icon),
+ *        no view field (the old inline players), no hide button.
  *
  * The iframe talks back over postMessage (same origin only): dsh:error,
  * dsh:picked (pick-and-ask), dsh:compose (fill the composer), dsh:sent.
@@ -83,12 +87,13 @@ function dayBucket(ts) {
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 }
 
-const KIND_LABEL = { doc: 'Doc', page: 'Page', app: 'App', image: 'Image', audio: 'Audio', video: 'Video', data: 'Data', pdf: 'PDF', code: 'Code' }
+const KIND_LABEL = { doc: 'Doc', page: 'Page', app: 'App', image: 'Image', audio: 'Audio', video: 'Video', data: 'Data', pdf: 'PDF', code: 'Code', file: 'File' }
 const KIND_FILTERS = [
   ['all', 'All kinds'], ['doc', 'Docs'], ['page', 'Pages'], ['app', 'Apps'],
-  ['media', 'Media'], ['data', 'Data'], ['code', 'Code'],
+  ['media', 'Media'], ['pdf', 'PDFs'], ['data', 'Data'], ['code', 'Code'], ['file', 'Files'], ['hidden', 'Hidden'],
 ]
 const MEDIA = { image: 1, audio: 1, video: 1 }
+const BINARY = { image: 1, audio: 1, video: 1, pdf: 1, file: 1 }   // no Source / Changes view
 
 /* ---------- styles (inline, theme-neutral) ---------- */
 const line = '1px solid rgba(128,128,128,.25)'
@@ -150,13 +155,53 @@ const I = {
   left: <Svg><path d="M9.5 4L5.5 8l4 4" /></Svg>,
   right: <Svg><path d="M6.5 4l4 4-4 4" /></Svg>,
   refresh: <Svg><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" /></Svg>,
+  download: <Svg><path d="M8 2.5v8M4.5 7.5L8 11l3.5-3.5M3 13.5h10" /></Svg>,
+  hide: <Svg><path d="M2 8s2.3-4 6-4 6 4 6 4-2.3 4-6 4-6-4-6-4z" /><circle cx="8" cy="8" r="1.8" /><path d="M2.5 13.5l11-11" /></Svg>,
+  show: <Svg><path d="M2 8s2.3-4 6-4 6 4 6 4-2.3 4-6 4-6-4-6-4z" /><circle cx="8" cy="8" r="1.8" /></Svg>,
 }
 
-function KindIcon({ item }) {
+function KindIcon({ item, thumbs }) {
+  const [bad, setBad] = useState(false)
   const k = item.kind
+  if (thumbs && item.thumb && !bad) {
+    return <img src={item.thumb} alt="" loading="lazy" decoding="async" onError={() => setBad(true)}
+      style={{ ...S.icon, objectFit: 'cover', padding: 0, background: 'rgba(128,128,128,.12)', width: 38 }} />
+  }
   const label = k === 'doc' ? 'MD' : k === 'page' ? 'HTML' : k === 'app' ? 'APP' : (item.ext || k).slice(0, 4)
   const tint = k === 'app' ? { borderColor: ACCENT, color: ACCENT } : MEDIA[k] ? { borderStyle: 'dashed' } : null
   return <span style={{ ...S.icon, ...tint }}>{label}</span>
+}
+
+/** The main download of an item: Markdown docs download their .md source, everything else its own bytes. */
+function mainDownload(item) {
+  if (item.downloads && item.downloads.length) return item.downloads[0]
+  return item.download ? { label: 'file', url: item.download } : null
+}
+/**
+ * Start a download without the anchor `download` attribute: Chrome sends <a download> straight to the network,
+ * past the service worker, so on a dsh-seal sealed GUI it would travel in plain. A hidden iframe navigation is
+ * answered by the worker (sealed); the server's Content-Disposition: attachment turns it into a download.
+ */
+function startDownload(url) {
+  try {
+    const f = document.createElement('iframe')
+    f.style.display = 'none'
+    f.setAttribute('aria-hidden', 'true')
+    f.src = url
+    document.body.appendChild(f)
+    setTimeout(() => { try { f.remove() } catch (e) { /* gone */ } }, 120000)
+  } catch (e) { window.open(url, '_blank', 'noopener') }
+}
+function onDownloadClick(e) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+  e.preventDefault()
+  e.stopPropagation()
+  startDownload(e.currentTarget.getAttribute('href'))
+}
+
+function fileNameOf(item, url) {
+  const m = /\/([^/?]+)\?download=1$/.exec(url || '')
+  try { return decodeURIComponent(m ? m[1] : (item.name.split('/').pop() || 'download')) } catch (e) { return item.name }
 }
 
 /* ---------- composer access (best effort; falls back to sending) ---------- */
@@ -200,7 +245,8 @@ function ArtifactsView({ visible, scope, ctx }) {
     try {
       const headers = {}
       if (etagRef.current && !force) headers['If-None-Match'] = etagRef.current
-      const res = await fetch(API + 'index' + (sessionId ? '?session=' + encodeURIComponent(sessionId) : ''),
+      const qs = [sessionId ? 'session=' + encodeURIComponent(sessionId) : '', kind === 'hidden' ? 'hidden=1' : ''].filter(Boolean).join('&')
+      const res = await fetch(API + 'index' + (qs ? '?' + qs : ''),
         { credentials: 'same-origin', cache: 'no-store', headers })
       if (res.status === 304) { setError(null); return }
       const ct = res.headers.get('content-type') || ''
@@ -210,7 +256,7 @@ function ArtifactsView({ visible, scope, ctx }) {
       const data = await res.json()
       etagRef.current = res.headers.get('ETag')
       setItems(Array.isArray(data.items) ? data.items : [])
-      setMeta({ attributed: data.attributed, indexer: data.indexer })
+      setMeta({ attributed: data.attributed, indexer: data.indexer, hidden: data.hidden })
       setError(null)
     } catch (e) {
       setError((e && e.message) || String(e))
@@ -218,7 +264,9 @@ function ArtifactsView({ visible, scope, ctx }) {
     if (sessionId) {
       try { const ib = await api('inbox?session=' + encodeURIComponent(sessionId)); setInbox(ib.items || []) } catch (e) { /* optional */ }
     }
-  }, [sessionId])
+  }, [sessionId, kind])
+
+  useEffect(() => { etagRef.current = null }, [kind])
 
   useEffect(() => {
     if (!visible) return undefined
@@ -238,7 +286,7 @@ function ArtifactsView({ visible, scope, ctx }) {
     return () => { listeners.delete(fn) }
   }, [sessionId, load])
 
-  const mineCount = items.filter((i) => i.mine).length
+  const mineCount = items.filter((i) => i.mine && !i.hidden).length
   const scopeKnown = !!sessionId && items.some((i) => typeof i.mine === 'boolean')
   const effScope = scopeKnown ? (scopePref || (mineCount ? 'mine' : 'all')) : 'all'
 
@@ -246,7 +294,8 @@ function ArtifactsView({ visible, scope, ctx }) {
     const ql = query.trim().toLowerCase()
     return items.filter((i) => {
       if (effScope === 'mine' && !i.mine) return false
-      if (kind !== 'all') {
+      if (kind === 'hidden') { if (!i.hidden) return false }
+      else if (kind !== 'all') {
         if (kind === 'media' ? !MEDIA[i.kind] : i.kind !== kind) return false
       }
       if (ql && (i.name + ' ' + (i.title || '')).toLowerCase().indexOf(ql) < 0) return false
@@ -319,7 +368,7 @@ function ArtifactsView({ visible, scope, ctx }) {
         )}
         {!error && items.length > 0 && shown.length === 0 && (
           <div style={S.note}>
-            {effScope === 'mine' && !query && kind === 'all'
+            {kind === 'hidden' && !query ? 'Nothing is de-listed.' : effScope === 'mine' && !query && kind === 'all'
               ? <>Nothing from this chat yet{meta.indexer && !meta.indexer.alive ? ' (the attribution indexer is not running)' : ''}. Switch to <b>All</b> to see every artifact on the host.</>
               : 'No artifact matches.'}
           </div>
@@ -334,15 +383,21 @@ function ArtifactsView({ visible, scope, ctx }) {
               <div style={S.row} onClick={() => setSelName(it.name)} title={it.name}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128,128,128,.10)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = '' }}>
-                <KindIcon item={it} />
+                <KindIcon item={it} thumbs />
                 <div style={S.rowMain}>
                   <div style={S.rowTitle}>{it.title || it.name}</div>
                   <div style={S.rowSub}>
                     {effScope === 'all' && it.mine && <span style={S.dot} title="from this chat">{'\u25cf '}</span>}
                     {it.public && <span title="public link enabled">{'\u{1F310} '}</span>}
+                    {it.hidden && <span title="de-listed: hidden from the list">{'(hidden) '}</span>}
                     {it.title ? it.name + ' \u00b7 ' : ''}{fmtAge(it.mtime)} {'\u00b7'} {fmtSize(it.size)}
                   </div>
                 </div>
+                {mainDownload(it) && (
+                  <a style={{ ...S.ibtn, textDecoration: 'none' }} href={mainDownload(it).url} data-dl="1"
+                    title={'Download ' + fileNameOf(it, mainDownload(it).url)} aria-label={'Download ' + it.name}
+                    onClick={onDownloadClick}>{I.download}</a>
+                )}
               </div>
             </div>
           )
@@ -367,7 +422,10 @@ function Detail({ item, sessionId, ctx, onBack, onChanged, sendToChat, flash }) 
   const [question, setQuestion] = useState('')
   const frameRef = useRef(null)
   const isMedia = !!MEDIA[item.kind]
-  const previewable = !isMedia
+  const enclosure = !!item.view                       // 2.2 server: media and files open in the enclosure page
+  const textModes = !BINARY[item.kind]                 // Source / Changes make sense for text only
+  const previewable = !isMedia                         // pick-and-ask and the Preview/Source/Changes switch
+  const pickable = !enclosure && !isMedia
 
   const loadInfo = useCallback(async () => {
     try { setInfo(await api('info?name=' + encodeURIComponent(item.name))) } catch (e) { setInfo({ error: e.message, versions: [] }) }
@@ -448,13 +506,19 @@ function Detail({ item, sessionId, ctx, onBack, onChanged, sendToChat, flash }) 
       if (on) { try { await navigator.clipboard.writeText(abs(r.url)) } catch (e) { /* ignore */ } flash('Public link copied') } else flash('Link is private again')
     } catch (e) { flash(e.message) }
   }
+  const toggleListed = async () => {
+    const hide = !item.hidden
+    if (hide && !window.confirm('Remove ' + item.name + ' from the list? The file, its versions and its link stay; the Hidden filter lists it again.')) return
+    try { await api('listing', { name: item.name, op: hide ? 'hide' : 'show', session: sessionId || undefined }); flash(hide ? 'Removed from the list' : 'Listed again'); onChanged(); if (hide) onBack() } catch (e) { flash(e.message) }
+  }
   const trash = async () => {
     if (!window.confirm('Move ' + item.name + ' to the artifact trash (~/reports/.artifacts/trash)?')) return
     try { await api('trash', { name: item.name }); flash('Moved to trash'); onChanged(); onBack() } catch (e) { flash(e.message) }
   }
   const copyLink = async () => { try { await navigator.clipboard.writeText(abs(item.url)); flash('Link copied') } catch (e) { flash('Clipboard blocked') } }
 
-  const src = withSession(item.url, sessionId)
+  const src = withSession(enclosure ? item.view : item.url, sessionId)
+  const dls = item.downloads && item.downloads.length ? item.downloads : (item.download ? [{ label: 'Download', url: item.download }] : [])
   const lines = typeof text === 'string' ? text.split('\n') : []
 
   return (
@@ -463,15 +527,19 @@ function Detail({ item, sessionId, ctx, onBack, onChanged, sendToChat, flash }) 
         <button type="button" style={S.ibtn} title="Back to the list" onClick={onBack}>{I.back}</button>
         <KindIcon item={item} />
         <span style={S.detailTitle} title={item.name}>{item.title || item.name}</span>
-        {info && info.source && info.home && (
+        {info && info.source && info.home && !BINARY[item.kind] && (
           <button type="button" style={S.btn} title="Open the source file in the sidebar editor"
             onClick={() => { if (!openSourceInEditor(ctx, info.home + '/' + info.source, sessionId ? { sessionId } : undefined)) flash('Editor unavailable') }}>Edit</button>
         )}
+        {dls.map((d) => (
+          <a key={d.url} style={{ ...S.btn, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }} href={d.url}
+            data-dl="1" onClick={onDownloadClick} title={'Download ' + fileNameOf(item, d.url)}>{I.download}{dls.length > 1 ? d.label.replace(' source', '').replace(' page', '') : ''}</a>
+        ))}
         <button type="button" style={S.ibtn} title="Copy link" onClick={copyLink}>{I.link}</button>
         <button type="button" style={S.ibtn} title="Open in a browser tab" onClick={() => window.open(item.url, '_blank', 'noopener')}>{I.ext}</button>
       </div>
       <div style={S.tools}>
-        {previewable && (
+        {previewable && textModes && (
           <span style={S.seg} role="group">
             {[['preview', 'Preview'], ['source', 'Source'], ['changes', 'Changes']].map(([m, l], i, a) => (
               <button key={m} type="button" style={{ ...S.segBtn, borderRadius: i === 0 ? '6px 0 0 6px' : i === a.length - 1 ? '0 6px 6px 0' : 0, borderLeft: i ? 0 : undefined, ...(mode === m ? S.segOn : null) }}
@@ -482,7 +550,7 @@ function Detail({ item, sessionId, ctx, onBack, onChanged, sendToChat, flash }) 
         {versions.length > 1 && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }} title="Automatic snapshots: every change is kept">
             <button type="button" style={S.ibtn} disabled={(vIdx < 0 ? versions.length - 1 : vIdx) <= 0}
-              onClick={() => { const cur = vIdx < 0 ? versions.length - 1 : vIdx; setVIdx(cur - 1); if (mode === 'preview') setMode('changes') }}>{I.left}</button>
+              onClick={() => { const cur = vIdx < 0 ? versions.length - 1 : vIdx; setVIdx(cur - 1); if (mode === 'preview' && textModes) setMode('changes') }}>{I.left}</button>
             <span style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12, minWidth: 34, textAlign: 'center' }}>{vLabel}</span>
             <button type="button" style={S.ibtn} disabled={vIdx < 0}
               onClick={() => setVIdx(vIdx + 1 >= versions.length - 1 ? -1 : vIdx + 1)}>{I.right}</button>
@@ -490,18 +558,24 @@ function Detail({ item, sessionId, ctx, onBack, onChanged, sendToChat, flash }) 
         )}
         {vSel && <button type="button" style={{ ...S.btn, ...S.primary }} onClick={restore}>Restore</button>}
         <span style={S.spacer} />
-        {previewable && <button type="button" style={{ ...S.ibtn, ...(picking ? S.ibtnOn : null) }} title="Pick an element and ask the agent about it" onClick={togglePick}>{I.pick}</button>}
+        {pickable && <button type="button" style={{ ...S.ibtn, ...(picking ? S.ibtnOn : null) }} title="Pick an element and ask the agent about it" onClick={togglePick}>{I.pick}</button>}
         <button type="button" style={S.ibtn} title="Reload" onClick={() => setReloadKey((k) => k + 1)}>{I.reload}</button>
         <button type="button" style={{ ...S.ibtn, ...(info && info.public ? S.ibtnOn : null) }} title={info && info.public ? 'Public link ON (click to make private)' : 'Make a public no-login link'} onClick={togglePublic}>{I.globe}</button>
+        {info && typeof info.hidden === 'boolean' && (
+          <button type="button" style={S.ibtn} title={item.hidden ? 'List it again' : 'Remove from the list (the file stays)'} onClick={toggleListed}>{item.hidden ? I.show : I.hide}</button>
+        )}
         <button type="button" style={S.ibtn} title="Move to trash" onClick={trash}>{I.trash}</button>
       </div>
 
       <div style={S.body}>
-        {mode === 'preview' && !isMedia && (
+        {item.description && mode === 'preview' && !enclosure && (
+          <div style={{ padding: '6px 10px', fontSize: 12.5, opacity: 0.75, borderBottom: line }}>{item.description}</div>
+        )}
+        {mode === 'preview' && (!isMedia || enclosure) && (
           <iframe ref={frameRef} key={item.name + ':' + reloadKey} style={S.frame} src={src} title={item.name}
             referrerPolicy="no-referrer" allow="clipboard-write; autoplay; microphone; fullscreen" />
         )}
-        {mode === 'preview' && isMedia && (
+        {mode === 'preview' && isMedia && !enclosure && (
           <div style={S.media}>
             {item.kind === 'image' && <img src={item.url} alt={item.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />}
             {item.kind === 'audio' && <audio controls src={item.url} style={{ width: '100%' }} />}

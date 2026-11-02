@@ -53,7 +53,10 @@ BACKFILL_BUDGET_S = 0.6      # max transcript work per loop, so fresh writes sta
 KEEP_VERSIONS = 40
 SNAP_MAX_BYTES = 1_500_000
 TEXT_EXT = {".html", ".htm", ".md", ".txt", ".json", ".csv", ".svg", ".js", ".mjs",
-            ".css", ".jsx", ".tsx", ".ts", ".py", ".sql", ".yaml", ".yml", ".xml"}
+            ".css", ".jsx", ".tsx", ".ts", ".py", ".sql", ".yaml", ".yml", ".xml",
+            # 2.2: small media and files get versions too (same SNAP_MAX_BYTES limit)
+            ".tsv", ".jsonl", ".ndjson", ".log", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp",
+            ".pdf", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".zip", ".docx", ".xlsx", ".pptx", ".odt", ".ods"}
 
 WRITE_TOOLS = {"write", "edit", "str_replace_editor", "create_file", "fs_write", "apply_patch",
                "multi_edit", "notebook_edit"}

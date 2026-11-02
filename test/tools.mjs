@@ -55,7 +55,7 @@ try {
   const host = mockHost()
   index.apply(host.ctx, {}, { defineTool: (def) => def })
   await index.apply.ready
-  ok(['artifact_templates', 'artifact_template_info', 'artifact_from_template', 'artifact_template_save'].every((n) => host.tools.has(n)) && host.tools.size === 4, 'four tools registered: ' + [...host.tools.keys()].join(', '))
+  ok(['artifact_templates', 'artifact_template_info', 'artifact_from_template', 'artifact_template_save', 'artifact_list', 'artifact_add', 'artifact_remove', 'artifact_update'].every((n) => host.tools.has(n)) && host.tools.size === 8, 'eight tools registered: ' + [...host.tools.keys()].join(', '))
   ok(host.injected.includes('tools') && host.injected.includes('skills'), 'tools and skills reached through runtime ctx.inject')
   const prov = host.providers[0]
   const skills = prov ? await prov.list() : []
@@ -106,7 +106,7 @@ m.apply(ctx, {}); await m.apply.ready; console.log('REGISTERED=' + reg.length)`)
     const real = mockHost()
     index.apply(real.ctx, {}, { defineTool: realDefine })
     await index.apply.ready
-    ok(real.tools.size === 4, 'the real core defineTool accepts all four definitions')
+    ok(real.tools.size === 8, 'the real core defineTool accepts all eight definitions')
     for (const d of real.tools.values()) ok(typeof d.execute === 'function' && d.output && typeof d.output.render === 'function', `${d.name}: compiled by the core defineTool`)
   } else console.log('SKIP real defineTool: no installed DSH core found')
 

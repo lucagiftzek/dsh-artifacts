@@ -1,9 +1,9 @@
 # Error codes: dsh-artifacts
 
-Checked on: DSH 0.1.5-rc.1 and 0.2.1-rc.5, plugin 2.1.0.
+Checked on: DSH 0.1.5-rc.1, 0.2.1-rc.5 and 0.2.1, plugin 2.2.0.
 
 Every failed result of the agent tools (`artifact_templates`, `artifact_template_info`, `artifact_from_template`,
-`artifact_template_save`) has this shape:
+`artifact_template_save`, and since 2.2 `artifact_list`, `artifact_add`, `artifact_remove`, `artifact_update`) has this shape:
 
 ```json
 { "ok": false, "error": "The data does not fit the template", "code": "ARTIFACT_DATA_INVALID",
@@ -32,6 +32,13 @@ same messages as text (exit 2 for refused data or templates, 1 for other errors)
 | ARTIFACT_TEMPLATE_READONLY | 403 | tool artifact_template_save | the target library is not writable | ask the human to fix the folder or the setting ([details](#artifact_template_readonly)) |
 | ARTIFACT_TOO_LARGE | 413 | tool artifact_template_save | a size limit was exceeded | make the files smaller, link big media ([details](#artifact_too_large)) |
 | ARTIFACT_WRITE_FAILED | 500 | tool artifact_from_template, tool artifact_template_save | a file system error | check the artifacts folder and the disk ([details](#artifact_write_failed)) |
+| ARTIFACT_NOT_FOUND | 404 | tool artifact_add (name), artifact_remove, artifact_update | no artifact with that name | call artifact_list (include_hidden: true) and pass a listed name ([details](#artifact_not_found)) |
+| ARTIFACT_AMBIGUOUS | 409 | tool artifact_add (name), artifact_remove, artifact_update | the name matches more than one artifact | pass one of `candidates` ([details](#artifact_ambiguous)) |
+| ARTIFACT_ARGS_INVALID | 400 | tool artifact_list, artifact_add, artifact_remove, artifact_update | an argument is missing or wrong | fix the fields in `errors` ([details](#artifact_args_invalid)) |
+| ARTIFACT_SOURCE_INVALID | 400 | tool artifact_add | the file to list is missing or not a regular file | pass the absolute path of a file ([details](#artifact_source_invalid)) |
+| ARTIFACT_TYPE_UNSUPPORTED | 415 | tool artifact_add | the extension is not on the allowlist | use a type from `supported` or convert ([details](#artifact_type_unsupported)) |
+| ARTIFACT_FILE_TOO_LARGE | 413 | tool artifact_add | the file is above ARTIFACT_MAX_ADD_MB | share a smaller file or ask the human to raise the limit ([details](#artifact_file_too_large)) |
+| ARTIFACT_LINK_FAILED | 500 | tool artifact_add (mode link) | the hardlink failed | use mode copy ([details](#artifact_link_failed)) |
 | ARTIFACT_TOOLS_UNAVAILABLE | 500 | log | the host tool registry was not found, no tool registered | use the CLI; see troubleshooting ([details](#artifact_tools_unavailable)) |
 | ARTIFACT_INTERNAL | 500 | any tool, log | unexpected exception | collect the log line and report a bug ([details](#artifact_internal)) |
 
@@ -138,6 +145,62 @@ same messages as text (exit 2 for refused data or templates, 1 for other errors)
 - **Agent action:** check with `ls -ld "${ARTIFACT_DIR:-$HOME/reports}"` and `df -h`; report to the human.
 - **Needs the human:** yes when permissions or disk space must change.
 - **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-data-refused)
+
+### ARTIFACT_NOT_FOUND
+- **Meaning:** the name, file name, path or URL does not match any artifact in the artifacts folder.
+- **Where:** tools `artifact_add` (with `name`), `artifact_remove`, `artifact_update`; CLI `artifact remove|relist|retitle`, exit 2.
+- **Likely causes:** a typo; the file was moved to the trash; an artifact in another user's folder.
+- **Agent action:** call `artifact_list` with `include_hidden: true` and use a listed `name`.
+- **Needs the human:** no.
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_AMBIGUOUS
+- **Meaning:** a name without extension matches several artifacts (for example `report.csv` and `report.json`).
+- **Where:** the same tools as ARTIFACT_NOT_FOUND; the result has `candidates`.
+- **Likely causes:** files with one stem and different extensions.
+- **Agent action:** call again with one of the `candidates` (with its extension).
+- **Needs the human:** no.
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_ARGS_INVALID
+- **Meaning:** a required argument is missing, has the wrong type or is out of range (scope, kind, limit, mode, title length, nothing to update).
+- **Where:** tools `artifact_list`, `artifact_add`, `artifact_remove`, `artifact_update` (`errors[]` per field).
+- **Likely causes:** `scope: "chat"` from a context without a chat session; an unknown `kind`.
+- **Agent action:** fix the fields in `errors` and call again.
+- **Needs the human:** no.
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_SOURCE_INVALID
+- **Meaning:** the `path` given to `artifact_add` does not exist, cannot be read, or is a folder.
+- **Where:** tool `artifact_add`; CLI `artifact add`, exit 2.
+- **Likely causes:** a relative path resolved against another working directory; a folder (apps must be written into the artifacts folder).
+- **Agent action:** pass the absolute path of a regular file.
+- **Needs the human:** no.
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_TYPE_UNSUPPORTED
+- **Meaning:** the extension is not on the closed allowlist of types the server serves (`supported` in the result).
+- **Where:** tool `artifact_add`; CLI `artifact add`, exit 2.
+- **Likely causes:** an executable, a file without extension, a dot file, an exotic format.
+- **Agent action:** convert the file to a supported type (for example zip it), or share it another way.
+- **Needs the human:** only to extend the allowlist (a plugin change).
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_FILE_TOO_LARGE
+- **Meaning:** the file is larger than `ARTIFACT_MAX_ADD_MB` (default 4096 MB).
+- **Where:** tool `artifact_add`; CLI `artifact add`, exit 2.
+- **Likely causes:** a raw video export or a big archive.
+- **Agent action:** share a smaller file (compress, trim, split).
+- **Needs the human:** to raise `ARTIFACT_MAX_ADD_MB` in the environment of `dsh web` (and of the CLI).
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
+
+### ARTIFACT_LINK_FAILED
+- **Meaning:** `mode: "link"` could not hardlink the file into the artifacts folder.
+- **Where:** tool `artifact_add`; CLI `artifact add --link`.
+- **Likely causes:** the file is on another file system (`EXDEV`) or the folder does not allow links.
+- **Agent action:** call again with `mode: "copy"` (the default).
+- **Needs the human:** no.
+- **Troubleshooting:** [entry](TROUBLESHOOTING.md#t-listing)
 
 ### ARTIFACT_TOOLS_UNAVAILABLE
 - **Meaning:** at start, the node half could not find the running harness's `@deepseek-ai/dsh-tools` (or the host has no `inject()`), so no agent tool was registered. The plugin itself loaded normally.

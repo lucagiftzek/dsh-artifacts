@@ -40,6 +40,11 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 log = logging.getLogger("dsh-artifacts")
 
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import files as F  # noqa: E402  listing state, byte serving, thumbnails (2.2)
+import viewer as V  # noqa: E402  the enclosure page for media and files (2.2)
+
 PLUGIN = HERE.parent
 HOME = str(Path.home())
 REPORT_DIR = Path(os.environ.get("ARTIFACT_DIR", os.path.join(HOME, "reports"))).resolve()
@@ -78,6 +83,26 @@ TYPES = {
     ".pdf": "application/pdf",
     ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
     ".glb": "model/gltf-binary", ".gltf": "model/gltf+json",
+    # 2.2: more text, media and plain files (closed list; files are only ever served as downloads)
+    ".jsonl": "text/plain; charset=utf-8", ".ndjson": "text/plain; charset=utf-8",
+    ".geojson": "application/json; charset=utf-8", ".ipynb": "application/json; charset=utf-8",
+    ".ics": "text/plain; charset=utf-8", ".patch": "text/plain; charset=utf-8", ".diff": "text/plain; charset=utf-8",
+    ".toml": "text/plain; charset=utf-8", ".ini": "text/plain; charset=utf-8", ".go": "text/plain; charset=utf-8",
+    ".rs": "text/plain; charset=utf-8", ".c": "text/plain; charset=utf-8", ".h": "text/plain; charset=utf-8",
+    ".srt": "text/plain; charset=utf-8", ".vtt": "text/vtt; charset=utf-8",
+    ".bmp": "image/bmp", ".tif": "image/tiff", ".tiff": "image/tiff", ".heic": "image/heic",
+    ".weba": "audio/webm", ".mkv": "video/x-matroska", ".avi": "video/x-msvideo",
+    ".zip": "application/zip", ".tar": "application/x-tar", ".gz": "application/gzip", ".tgz": "application/gzip",
+    ".bz2": "application/x-bzip2", ".xz": "application/x-xz", ".7z": "application/x-7z-compressed",
+    ".zst": "application/zstd",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".doc": "application/msword", ".xls": "application/vnd.ms-excel", ".ppt": "application/vnd.ms-powerpoint",
+    ".odt": "application/vnd.oasis.opendocument.text", ".ods": "application/vnd.oasis.opendocument.spreadsheet",
+    ".odp": "application/vnd.oasis.opendocument.presentation", ".rtf": "application/rtf",
+    ".epub": "application/epub+zip", ".parquet": "application/vnd.apache.parquet",
+    ".sqlite": "application/vnd.sqlite3", ".eml": "message/rfc822", ".stl": "model/stl",
 }
 KIND = {
     ".md": "doc", ".html": "page", ".htm": "page", ".txt": "data", ".log": "data",
@@ -89,8 +114,20 @@ KIND = {
     ".mp4": "video", ".m4v": "video", ".webm": "video", ".mov": "video", ".pdf": "pdf",
     ".py": "code", ".sh": "code", ".sql": "code", ".js": "code", ".jsx": "code",
     ".ts": "code", ".tsx": "code", ".css": "code", ".yaml": "code", ".yml": "code",
+    # 2.2
+    ".jsonl": "data", ".ndjson": "data", ".geojson": "data", ".ipynb": "data", ".ics": "data", ".srt": "data",
+    ".vtt": "data", ".patch": "code", ".diff": "code", ".toml": "code", ".ini": "code", ".go": "code", ".rs": "code",
+    ".c": "code", ".h": "code", ".bmp": "image", ".weba": "audio", ".mkv": "video",
+    ".tif": "file", ".tiff": "file", ".heic": "file", ".avi": "file",
+    ".zip": "file", ".tar": "file", ".gz": "file", ".tgz": "file", ".bz2": "file", ".xz": "file", ".7z": "file",
+    ".zst": "file", ".docx": "file", ".xlsx": "file", ".pptx": "file", ".doc": "file", ".xls": "file",
+    ".ppt": "file", ".odt": "file", ".ods": "file", ".odp": "file", ".rtf": "file", ".epub": "file",
+    ".parquet": "file", ".sqlite": "file", ".eml": "file", ".stl": "file", ".glb": "file", ".gltf": "file",
 }
-LISTED_KINDS = {"doc", "page", "data", "image", "audio", "video", "pdf", "code"}
+LISTED_KINDS = {"doc", "page", "data", "image", "audio", "video", "pdf", "code", "file"}
+# Kinds a top-level browser navigation opens in the enclosure page (2.2); embeds and fetches get the bytes.
+VIEW_KINDS = {"image", "audio", "video", "pdf", "data", "code", "file"}
+LISTING_OPS = ("hide", "show", "meta")
 MEDIA_DIR = "media"
 
 _get_token = lambda: None
@@ -363,16 +400,51 @@ def title_of(path, ext, st):
 
 
 def _item(rel, full, st, ext, kind, url=None, source=None, files=None):
-    return {
-        "name": rel, "url": url or PREFIX + quote(rel), "ext": ext.lstrip("."), "kind": kind,
+    url = url or PREFIX + quote(rel)
+    it = {
+        "name": rel, "url": url, "ext": ext.lstrip("."), "kind": kind,
         "size": st.st_size, "mtime": int(st.st_mtime),
         "title": title_of(full, ext, st) if kind in ("doc", "page", "app") else "",
         "source": source, "files": files or [rel],
         "public": os.path.exists(str(REPORT_DIR / rel) + ".public") if "/" not in rel else False,
     }
+    # 2.2: where to view and download it, and a thumbnail for media
+    if kind != "app":
+        it["download"] = url + "?download=1"
+        if kind == "doc" and source:
+            it["downloads"] = [{"label": ".md source", "url": PREFIX + quote(source) + "?download=1"},
+                               {"label": ".html page", "url": url + "?download=1"}]
+    if kind in VIEW_KINDS:
+        it["view"] = url + "?view=1"
+    if F.THUMBS_ON and (kind in F.THUMB_KINDS and (kind != "image" or ext in F.RASTER_EXT)):
+        it["thumb"] = url + "?thumb=1&m=%x" % st.st_mtime_ns
+    elif kind == "image" and ext == ".svg":
+        it["thumb"] = url + "?raw=1&m=%x" % st.st_mtime_ns
+    return it
 
 
-def build_index(session=None):
+def _apply_listing(items, include_hidden):
+    lst = F.listing(STORE)
+    out, hidden = [], 0
+    for it in items:
+        s = F.state_for(lst, [it["name"], it.get("source")]) if lst else None
+        if s:
+            if s["title"]:
+                it["title"] = s["title"]
+            if s["description"]:
+                it["description"] = s["description"]
+            if s["added"]:
+                it["added"] = True
+            if s["hidden"]:
+                hidden += 1
+                if not include_hidden:
+                    continue
+                it["hidden"] = True
+        out.append(it)
+    return out, hidden
+
+
+def build_index(session=None, include_hidden=False):
     items = []
     try:
         entries = list(os.scandir(REPORT_DIR))
@@ -422,8 +494,9 @@ def build_index(session=None):
             items.append(_item(name, Path(e.path), st, ext, kind))
         except OSError:
             continue
-    items.sort(key=lambda i: i["mtime"], reverse=True)
-    out = {"count": len(items), "items": items}
+    items, hidden = _apply_listing(items, include_hidden)
+    items.sort(key=lambda i: (-i["mtime"], i["name"]))
+    out = {"count": len(items), "items": items, "hidden": hidden}
     if session:
         fam = family(session)
         claims = all_claims()
@@ -609,101 +682,58 @@ def _read_body(h, limit=8_000_000):
     return obj
 
 
-def _serve_bytes(h, method, data, ctype, etag, mtime=None, cache="no-store"):
-    rng = h.headers.get("Range")
-    total = len(data)
-    if rng and rng.startswith("bytes=") and total:
-        try:
-            a, b = rng[6:].split(",")[0].split("-")
-            if a == "":
-                start, end = max(0, total - int(b)), total - 1
-            else:
-                start, end = int(a), (int(b) if b else total - 1)
-            end = min(end, total - 1)
-            if start > end:
-                raise ValueError
-            part = data[start:end + 1]
-            h.send_response(206)
-            h.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
-            h.send_header("Content-Type", ctype)
-            h.send_header("Content-Length", str(len(part)))
-            h.send_header("Accept-Ranges", "bytes")
-            h.send_header("Cache-Control", cache)
-            h.end_headers()
-            if method != "HEAD":
-                h.wfile.write(part)
-            return True
-        except ValueError:
-            pass
-    h.send_response(200)
-    h.send_header("Content-Type", ctype)
-    h.send_header("Content-Length", str(total))
-    h.send_header("Cache-Control", cache)
-    h.send_header("Accept-Ranges", "bytes")
-    h.send_header("X-Content-Type-Options", "nosniff")
-    if etag:
-        h.send_header("ETag", etag)
-    if mtime:
-        h.send_header("Last-Modified", formatdate(mtime, usegmt=True))
-    h.end_headers()
-    if method != "HEAD":
-        try:
-            h.wfile.write(data)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-    return True
+def _serve_bytes(h, method, data, ctype, etag, mtime=None, cache="no-store", headers=None):
+    return F.send_content(h, method, ctype, data=data, etag=etag, mtime=mtime, cache=cache, headers=headers)
 
 
-def _serve_large_file(h, method, path, ctype, st):
-    """Stream big media files with Range support, without reading all into memory."""
-    total = st.st_size
-    start, end = 0, total - 1
-    code = 200
-    rng = h.headers.get("Range")
-    if rng and rng.startswith("bytes="):
-        try:
-            a, b = rng[6:].split(",")[0].split("-")
-            if a == "":
-                start = max(0, total - int(b))
-            else:
-                start = int(a)
-                end = int(b) if b else total - 1
-            end = min(end, total - 1)
-            if start <= end:
-                code = 206
-            else:
-                start, end = 0, total - 1
-        except ValueError:
-            start, end = 0, total - 1
-    h.send_response(code)
-    h.send_header("Content-Type", ctype)
-    h.send_header("Content-Length", str(end - start + 1))
-    h.send_header("Accept-Ranges", "bytes")
-    h.send_header("Cache-Control", "no-store")
-    if code == 206:
-        h.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, total))
-    h.end_headers()
-    if method == "HEAD":
-        return True
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(start)
-            left = end - start + 1
-            while left > 0:
-                chunk = fh.read(min(1 << 20, left))
-                if not chunk:
-                    break
-                h.wfile.write(chunk)
-                left -= len(chunk)
-    except (BrokenPipeError, ConnectionResetError):
-        pass
-    return True
+def _serve_large_file(h, method, path, ctype, st, headers=None):
+    """Stream big files with Range support, without reading all into memory."""
+    return F.send_content(h, method, ctype, path=path, size=st.st_size, etag=F.etag_for(st), mtime=st.st_mtime,
+                          headers=headers)
 
 
-def serve_path(h, method, rel, q, public=False):
+def _serve_file(h, method, full, ctype, st, headers=None, transform=None):
+    """A file from disk: streamed when big, else read (and optionally transformed, e.g. the bridge)."""
+    if st.st_size > F.INLINE_MAX or transform is None:
+        if st.st_size > F.INLINE_MAX:
+            return _serve_large_file(h, method, full, ctype, st, headers)
+        return _serve_bytes(h, method, full.read_bytes(), ctype, F.etag_for(st), st.st_mtime, headers=headers)
+    return _serve_bytes(h, method, transform(full.read_bytes()), ctype, F.etag_for(st), st.st_mtime, headers=headers)
+
+
+def _md_footer(page, rel, public):
+    """Download links in the footer of a rendered Markdown page (served pages only, never the file)."""
+    base = (PUBLIC_PREFIX if public else PREFIX)
+    stem = rel[:-5] if rel.endswith(".html") else rel[:-3]
+    # no download attribute: a plain navigation to an attachment downloads too, and only navigations pass
+    # through dsh-seal's service worker (Chrome sends <a download> straight to the network)
+    links = (' Download: <a href="%s%s.md?download=1">.md source</a>, '
+             '<a href="%s%s.html?download=1">.html page</a>.' % (base, quote(stem), base, quote(stem)))
+    i = page.rfind(b"</footer>")
+    if i == -1 or b"artifact-kit" not in page[:1200]:
+        return page
+    return page[:i] + links.encode() + page[i:]
+
+
+def _wants_view(h, q, kind):
+    if kind not in VIEW_KINDS or "raw" in q or "download" in q or "thumb" in q:
+        return False
+    return "view" in q or _sec_dest(h) == "document"
+
+
+def item_meta(rel):
+    """Listing state (title, description, sandbox) for a served name."""
+    lst = F.listing(STORE)
+    return F.state_for(lst, [rel, _pair(rel)] if rel.endswith((".md", ".html")) else [rel]) or {}
+
+
+def serve_path(h, method, rel, q, public=False, download=False):
     """Serve one artifact path (already fenced)."""
     full = REPORT_DIR / rel
+    download = download or "download" in q
     if full.is_dir():
+        if download:
+            return _send(h, 404, "an app folder has no single file to download\n", "text/plain; charset=utf-8", method)
         if not h.path.split("?")[0].endswith("/"):
             loc = h.path.split("?")[0] + "/" + (("?" + h.path.split("?", 1)[1]) if "?" in h.path else "")
             h.send_response(301)
@@ -720,7 +750,7 @@ def serve_path(h, method, rel, q, public=False):
     md_twin = REPORT_DIR / (rel[:-5] + ".md") if ext == ".html" else None
     # .md requested by a browser -> rendered page; .html whose source is newer .md -> fresh render
     render_from = None
-    if ext == ".md" and full.is_file() and _wants_html(h, q):
+    if ext == ".md" and full.is_file() and _wants_html(h, q) and not download:
         render_from = full
     elif ext == ".html" and md_twin is not None and md_twin.is_file():
         if not full.exists() or (is_kit_html(full) and md_twin.stat().st_mtime >= full.stat().st_mtime - 1):
@@ -731,24 +761,55 @@ def serve_path(h, method, rel, q, public=False):
         page, etag = render_md(render_from)
         if probe:
             return _send(h, 200, etag + "\n", "text/plain; charset=utf-8", method)
-        page = inject_bridge(page, rel if ext == ".html" else rel[:-3] + ".html", etag, public)
+        page_name = rel if ext == ".html" else rel[:-3] + ".html"
+        if download:
+            return _serve_bytes(h, method, page, TYPES[".html"], etag, render_from.stat().st_mtime,
+                                headers={"Content-Disposition": F.disposition("attachment", page_name.split("/")[-1])})
+        page = inject_bridge(_md_footer(page, page_name, public), page_name, etag, public)
         return _serve_bytes(h, method, page, TYPES[".html"], etag, render_from.stat().st_mtime)
     if not full.is_file():
         return _send(h, 404, "no such artifact: %s\n" % rel, "text/plain; charset=utf-8", method)
     st = full.stat()
-    etag = '"%x-%x"' % (st.st_mtime_ns, st.st_size)
+    etag = F.etag_for(st)
     if probe:
         return _send(h, 200, etag + "\n", "text/plain; charset=utf-8", method)
-    if st.st_size > 8_000_000:
-        return _serve_large_file(h, method, full, TYPES[ext], st)
-    data = full.read_bytes()
+    kind = KIND.get(ext, "file" if ext not in (".html", ".htm") else "page")
+    ctype = TYPES[ext]
+    fname = rel.split("/")[-1]
+    if download:
+        return _serve_file(h, method, full, ctype, st, {"Content-Disposition": F.disposition("attachment", fname)})
+    if "thumb" in q:
+        t = F.thumb(STORE, rel, full, kind, ext, st)
+        if t is None:
+            return _send(h, 404, "no thumbnail\n", "text/plain; charset=utf-8", method)
+        tst = t.stat()
+        return _serve_bytes(h, method, t.read_bytes(), "image/webp", F.etag_for(tst), tst.st_mtime, cache="private, max-age=86400")
+    meta = item_meta(rel)
+    if _wants_view(h, q, kind):
+        base = (PUBLIC_PREFIX if public else PREFIX) + quote(rel)
+        k = kit()
+        page = V.render(rel=rel, full=full, st=st, kind=kind, ext=ext, ctype=ctype, title=meta.get("title") or "",
+                        description=meta.get("description") or "", base=base, versions=versions_of(rel), public=public,
+                        kit_css=getattr(k, "CSS", "") if k else "", versions_url=V.versions_link(PREFIX, rel))
+        page = inject_bridge(page, rel, etag, public)
+        return _serve_bytes(h, method, page, TYPES[".html"], None)
+    headers = {}
+    if kind == "file":
+        headers["Content-Disposition"] = F.disposition("attachment", fname)
+    elif ext not in (".html", ".htm"):
+        headers["Content-Disposition"] = F.disposition("inline", fname)
+    if ext in F.ACTIVE_EXT or (ext in (".html", ".htm") and meta.get("sandbox")):
+        # SVG and XML can carry script, and HTML listed from outside the artifacts folder is not ours:
+        # rendered in an opaque origin without script, it can never act as the DSH origin.
+        headers["Content-Security-Policy"] = F.SANDBOX_CSP
+        return _serve_file(h, method, full, ctype, st, headers)
     if ext in (".html", ".htm"):
         # Pages inside an app directory share the app's identity (storage, inbox,
         # owner) so 'artifact state <app>' and the page agree on one name.
         top = rel.split("/")[0]
         bname = top if "/" in rel and top != MEDIA_DIR and (REPORT_DIR / top).is_dir() else rel
-        data = inject_bridge(data, bname, etag, public)
-    return _serve_bytes(h, method, data, TYPES[ext], etag, st.st_mtime)
+        return _serve_file(h, method, full, ctype, st, headers, transform=lambda d: inject_bridge(d, bname, etag, public))
+    return _serve_file(h, method, full, ctype, st, headers)
 
 
 def serve_lib(h, method, rel):
@@ -786,7 +847,7 @@ def api(h, method, route, q):
     b = lambda k, d=None: body.get(k, d)
     try:
         if route == "index":
-            out = build_index(valid_session(g("session")))
+            out = build_index(valid_session(g("session")), include_hidden=g("hidden") in ("1", "true"))
             if h.headers.get("If-None-Match") == '"%s"' % out["etag"]:
                 h.send_response(304)
                 h.send_header("ETag", '"%s"' % out["etag"])
@@ -806,9 +867,31 @@ def api(h, method, route, q):
                 for s in (claims.get(n) or {}).get("sessions", []):
                     if s not in sess:
                         sess.append(s)
+            meta = F.state_for(F.listing(STORE), [rel, src]) or {}
             return _json(h, 200, {"name": rel, "source": src, "home": str(REPORT_DIR), "versions": versions_of(src),
                                   "sessions": sess, "public": os.path.exists(str(REPORT_DIR / rel) + ".public"),
-                                  "storageKeys": len(_json_load(_state_path(rel), {}))}, method)
+                                  "storageKeys": len(_json_load(_state_path(rel), {})),
+                                  "hidden": bool(meta.get("hidden")), "title": meta.get("title") or "",
+                                  "description": meta.get("description") or "", "added": meta.get("added"),
+                                  "sandbox": bool(meta.get("sandbox"))}, method)
+
+        if route == "listing" and method == "POST":
+            # de-list, list again, or set the title / description shown in the tab (the file is never touched)
+            rel = safe_rel(b("name"))
+            op = b("op")
+            if not rel or op not in LISTING_OPS:
+                return _json(h, 400, {"error": "need name and op (hide, show or meta)"}, method)
+            if not (REPORT_DIR / rel).exists() and not (REPORT_DIR / source_rel(rel)).exists():
+                return _json(h, 404, {"error": "no such artifact: %s" % rel}, method)
+            entry = {"op": op, "name": rel, "how": "ui"}
+            sess = valid_session(b("session"))
+            if sess:
+                entry["session"] = sess
+            for k in ("title", "description"):
+                if isinstance(b(k), str):
+                    entry[k] = b(k)
+            F.listing_append(STORE, entry)
+            return _json(h, 200, {"ok": True, "name": rel, "op": op}, method)
 
         if route == "raw":
             rel = safe_rel(g("name"))
@@ -819,6 +902,12 @@ def api(h, method, route, q):
             data = version_bytes(src, vid) if vid else ((REPORT_DIR / src).read_bytes() if (REPORT_DIR / src).is_file() else None)
             if data is None:
                 return _json(h, 404, {"error": "not found"}, method)
+            if g("download") is not None:
+                ext = os.path.splitext(src)[1].lower()
+                stem, dot = os.path.splitext(src.split("/")[-1])
+                fname = "%s.v%s%s" % (stem, vid, dot) if vid else src.split("/")[-1]
+                return _serve_bytes(h, method, data, TYPES.get(ext, "application/octet-stream"), None,
+                                    headers={"Content-Disposition": F.disposition("attachment", fname)})
             return _send(h, 200, data, "text/plain; charset=utf-8", method)
 
         if route == "diff":
@@ -978,6 +1067,18 @@ def init(get_token=None, spawn_indexer=True):
             log.error("could not start the artifact indexer: %s", e)
 
 
+def split_download(rest):
+    """(rel, download): "<name>/download" names the download of the file <name> (2.2)."""
+    rel = safe_rel(rest)
+    if rest.rstrip("/").endswith("/download"):
+        parent = safe_rel(rest.rstrip("/")[: -len("/download")])
+        if parent and not (REPORT_DIR / parent).is_dir():
+            p = REPORT_DIR / parent
+            if p.is_file() or (parent.endswith(".html") and (REPORT_DIR / (parent[:-5] + ".md")).is_file()):
+                return parent, True
+    return rel, False
+
+
 def _deny(h, method):
     if method in ("GET", "HEAD"):
         token = _get_token()
@@ -1012,10 +1113,10 @@ def handle(h, method):
                 out = build_index(valid_session((q.get("session") or [None])[0]))
                 return _json(h, 200, out, method)
             return _send(h, 404, "not found\n", "text/plain", method)
-        rel = safe_rel(rest)
+        rel, dl = split_download(rest)
         if not rel:
             return _send(h, 404, "not found\n", "text/plain; charset=utf-8", method)
-        return serve_path(h, method, rel, q)
+        return serve_path(h, method, rel, q, download=dl)
     except (BrokenPipeError, ConnectionResetError):
         return True
     except Exception as e:
@@ -1033,7 +1134,7 @@ def handle_public(h, method):
     if method not in ("GET", "HEAD"):
         return _send(h, 405, "method not allowed\n", "text/plain", method)
     parts = urlsplit(h.path)
-    rel = safe_rel(parts.path[len(PUBLIC_PREFIX):])
+    rel, dl = split_download(parts.path[len(PUBLIC_PREFIX):])
     if not rel or "/" in rel:
         return _send(h, 404, "not found\n", "text/plain", method)
     q = parse_qs(parts.query, keep_blank_values=True)
@@ -1043,7 +1144,7 @@ def handle_public(h, method):
     if not ok:
         return _send(h, 404, "not found\n", "text/plain", method)
     try:
-        return serve_path(h, method, rel, q, public=True)
+        return serve_path(h, method, rel, q, public=True, download=dl)
     except Exception:
         log.exception("public artifact serve failed")
         return _send(h, 500, "error\n", "text/plain", method)
