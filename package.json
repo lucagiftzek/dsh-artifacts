@@ -23,7 +23,9 @@
     "LICENSE",
     "NOTICE",
     "!lib/**/*.map",
-    "!lib/*.map"
+    "!lib/*.map",
+    "!**/__pycache__",
+    "!**/*.pyc"
   ],
   "scripts": {
     "build": "node scripts/build.mjs && node scripts/build-node.mjs",
